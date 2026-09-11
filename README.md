@@ -1,42 +1,14 @@
-# vetted.hpp
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="vetted.hpp: a single-header C++20 library for validated types. Check a value once, where it enters; the type carries the proof after that. A raw value that passes becomes a ChannelID and flows through three functions with no re-check; one that fails is rejected at the boundary.">
+</p>
 
-A single-header C++20 library for validated types. The idea is to check a
-value once, where it enters the program, and let the type carry the proof from
-then on.
+A `vetted::Validated<T, Rules...>` is a `T` that is known to satisfy every rule.
+The only way to make one is through a constructor that runs the rules, so any
+function that receives one can use the value without checking it. Validation
+happens in one place, where untrusted data enters, and the type carries the
+proof through every layer below.
 
-```cpp
-#include <vetted.hpp>
-
-using ChannelID = vetted::Validated<int16_t, vetted::Positive, vetted::AtMost<4096>>;
-
-void tune_radio(ChannelID channel);   // can't be called with an unchecked number
-```
-
-| Path | What's in it |
-|---|---|
-| `include/vetted.hpp` | The whole library: the `Validated<T, Rules...>` wrapper and the rule toolbox. Everything is in `namespace vetted`. |
-| `examples/domain.hpp` | An example project's types: `ChannelID`, `FFTSize`, `Baud`, ... one line each, plus structs of them |
-| `examples/main.cc` | The call chain before and after, the parsing boundary, and a demo |
-
-## Using it
-
-Copy `include/vetted.hpp` into your project, or add it with CMake:
-
-```cmake
-include(FetchContent)
-FetchContent_Declare(vetted GIT_REPOSITORY https://github.com/aedrax/vetted.hpp.git GIT_TAG main)
-FetchContent_MakeAvailable(vetted)
-
-target_link_libraries(app PRIVATE vetted::vetted)
-```
-
-Or install it (`cmake --install build --prefix /some/where`) and use
-`find_package(vetted REQUIRED)`. Either way the target is `vetted::vetted` and
-it sets C++20 for you.
-
-The snippets below assume `using namespace vetted;`, as the example code does.
-
-## The problem
+## The problem it removes
 
 Say `handle_request()` calls `tune_radio()`, which calls `write_register()`,
 and all three take a radio channel number. If that number is a plain
@@ -61,26 +33,18 @@ void handle_request(int16_t channel) {
 That is three copies of the same rule, and a fourth layer would mean a fourth
 copy. Change the rule and you have to go find them all.
 
-## The fix
-
-Make "a channel number that has been checked" its own type:
+Make "a channel number that has been checked" its own type instead:
 
 ```cpp
-using ChannelID = Validated<int16_t, Positive, AtMost<4096>>;
-```
+using ChannelID = vetted::Validated<int16_t, vetted::Positive, vetted::AtMost<4096>>;
 
-The only way to get a `ChannelID` is through a constructor that runs the
-rules. So if a function *has* one, the checks already happened. The chain
-becomes:
-
-```cpp
 void write_register(ChannelID channel) { ... }
 void tune_radio(ChannelID channel)     { write_register(channel); }
 void handle_request(ChannelID channel) { tune_radio(channel); }
 ```
 
-No checks anywhere. Validation lives in exactly one place: wherever untrusted
-data first turns into a `ChannelID`.
+No checks anywhere. The one place validation is visible is wherever untrusted
+data first turns into a `ChannelID`:
 
 ```cpp
 std::optional<ChannelID> parse_channel(std::string_view text) {
@@ -89,7 +53,47 @@ std::optional<ChannelID> parse_channel(std::string_view text) {
 }
 ```
 
-## Writing a rule
+When the value is a constant, the compiler runs the rules during the build
+and names the one that broke:
+
+```
+constexpr ChannelID oops{5000};
+// error: constexpr variable 'oops' must be initialized by a constant expression
+// note: non-constexpr function 'rule_violated<vetted::AtMost<4096>>' cannot be used in a constant expression
+```
+
+## Is it safer? Is it faster?
+
+Safer, yes: a missing check becomes a compile error, the rule lives in one
+line, and every place a raw value becomes a trusted one is greppable. Faster,
+a little: the wrapper is the same size as the raw type and passes in
+registers, and a validated call chain drops the range check from every layer.
+The measurements and the caveats are in
+[docs/safety-and-performance.md](docs/safety-and-performance.md).
+
+## Using it
+
+Copy `include/vetted.hpp` into your project, or add it with CMake:
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(vetted GIT_REPOSITORY https://github.com/aedrax/vetted.hpp.git GIT_TAG main)
+FetchContent_MakeAvailable(vetted)
+
+target_link_libraries(app PRIVATE vetted::vetted)
+```
+
+Or install it (`cmake --install build --prefix /some/where`) and use
+`find_package(vetted REQUIRED)`. Either way the target is `vetted::vetted` and
+it sets C++20 for you.
+
+The snippets below assume `using namespace vetted;`, as the example code does.
+
+## How it works
+
+<p align="center">
+  <img src="./assets/readme/anatomy.svg" width="100%" alt="Anatomy of the declaration Validated of int16_t, Positive, AtMost 4096: int16_t is the value type and reads back as a plain int16_t; Positive and AtMost are rules that run in order, and each rule is a struct with a passes function and a requirement function.">
+</p>
 
 A rule is a struct with two static functions. `passes` says whether a value
 passes, and `requirement` states the condition for the error message:
@@ -101,16 +105,6 @@ struct PowerOfTwo {
 };
 ```
 
-Rules can take parameters:
-
-```cpp
-template <auto Max>
-struct AtMost {
-    static constexpr bool passes(auto v) { return v <= Max; }
-    static std::string requirement() { return "<= " + std::to_string(Max); }
-};
-```
-
 `Validated` checks that every rule really has both functions, using a C++20
 concept. It's a compile-time contract with no runtime cost. Forget `requirement()`
 and the build stops at the `using` line:
@@ -119,6 +113,13 @@ and the build stops at the `using` line:
 error: constraints not satisfied for class template 'Validated' [with T = int, Rules = <Even>]
 note: because 'Rule::requirement()' would be invalid: no member named 'requirement' in 'Even'
 ```
+
+### Two ways in
+
+| | When | On failure |
+|---|---|---|
+| `ChannelID{v}` | The value should never be wrong: constants, config, computed values | Throws `std::invalid_argument`, e.g. `value 5000: expected <= 4096`. In a `constexpr` context, the build fails instead. |
+| `ChannelID::try_from(v)` | Untrusted input: user text, network, files | Returns `std::nullopt` |
 
 ## The toolbox
 
@@ -148,7 +149,7 @@ using PllDivider = Validated<int,
     Satisfies<[](auto v) { return v == 1 || v % 2 == 0; }, "1 or an even number">>;
 ```
 
-## Chaining rules
+### Chaining rules
 
 List them, and they run in order:
 
@@ -156,106 +157,32 @@ List them, and they run in order:
 using FFTSize = Validated<int32_t, PowerOfTwo, AtMost<65536>>;
 ```
 
-Or bundle them into a new rule so the intent has a name:
-
-```cpp
-template <auto Lo, auto Hi>
-using Between = AllOf<AtLeast<Lo>, AtMost<Hi>>;
-
-using Percent = Validated<int, Between<0, 100>>;
-```
-
-`AllOf`, `AnyOf` and `Not` nest however you like, so odd hardware constraints
-still read as one line:
-
-```cpp
-// 0..31, except the pins reserved for boot and the UART
-using GpioPin     = Validated<int, Between<0, 31>, NotIn<0, 1, 14, 15>>;
-
-// a small power of two, or exactly the hardware maximum
-using BurstLength = Validated<int, AnyOf<AllOf<PowerOfTwo, AtMost<64>>, In<1000>>>;
-```
+Rules can take template parameters, bundle into named combinations like
+`Between<Lo, Hi>`, and nest with `AllOf`, `AnyOf` and `Not`. See
+[docs/rules.md](docs/rules.md).
 
 ## Validated types in structs
 
 They compose like any other member. A struct of validated fields carries the
-same guarantee as its parts: if you have one, every field passed.
+same guarantee as its parts, its layout is identical to the raw version, and a
+rule can span several fields at once. Wire formats stay raw and convert once
+at the boundary. See [docs/structs.md](docs/structs.md).
 
-```cpp
-struct RadioConfig {
-    ChannelID channel;
-    Baud      baud;
-    Percent   volume;
-};
+## Limits
 
-constexpr RadioConfig defaults{ChannelID{14}, Baud{115200}, Percent{50}};  // checked at build time
+- The guarantee is only as good as the rules, so test them.
+- A rule promises exactly what it says and no more. If a function needs
+  `offset + size` to fit, the type has to promise that, not just `>= 0`.
+- Arithmetic on a validated value produces a plain `T`, so the proof doesn't
+  propagate through math. Reading out is free; only going in is guarded.
+- It says "this number is in range" and nothing else. It is not memory safety
+  or thread safety.
 
-void apply_config(const RadioConfig& cfg) {   // no checks, however deep it goes
-    handle_request(cfg.channel);
-    configure_serial(cfg.baud);
-    set_volume(cfg.volume);
-}
-```
+## The example
 
-Layout is identical to the same struct with raw ints: same size, same
-alignment, trivially copyable. `examples/domain.hpp` asserts this.
-
-Bytes off a socket or out of flash can't carry a proof, so a packed wire
-struct should stay raw. Convert it once, in one function:
-
-```cpp
-struct __attribute__((packed)) RadioConfigWire { int16_t channel; int32_t baud; int8_t volume; };
-
-std::optional<RadioConfig> parse_config(const RadioConfigWire& wire) {
-    auto channel = ChannelID::try_from(wire.channel);
-    auto baud    = Baud::try_from(wire.baud);
-    auto volume  = Percent::try_from(wire.volume);
-    if (!channel || !baud || !volume) return std::nullopt;
-    return RadioConfig{*channel, *baud, *volume};
-}
-```
-
-A rule can also span several fields. `Validated<T>` works for any `T`, so
-wrap a struct and write a rule that looks at the whole thing. In this example
-each field is valid on its own, but the pair must also fit inside the capture
-buffer, which neither field can promise alone:
-
-```cpp
-struct IQRange { BlockOffset offset; FFTSize size; };
-
-struct WithinCaptureBuffer {
-    static constexpr bool passes(const IQRange& r) { return r.offset + r.size <= kCaptureBufferSamples; }
-    static std::string requirement() { return "offset + size <= " + std::to_string(kCaptureBufferSamples); }
-};
-
-using IQBlock = Validated<IQRange, WithinCaptureBuffer>;
-
-void process_iq_block(const IQBlock& block) {
-    int64_t end = block->offset + block->size;   // -> reaches the fields
-}
-```
-
-A `Validated` field inside a packed struct also packs correctly on Clang.
-GCC may refuse to under-align it, because the type has a user-provided
-constructor and so isn't a POD, and it will warn "ignoring packed attribute
-because of unpacked non-POD field". Keeping wire structs raw sidesteps that.
-
-## Two ways in
-
-| | When | On failure |
-|---|---|---|
-| `ChannelID{v}` | The value should never be wrong: constants, config, computed values | Throws `std::invalid_argument`, e.g. `value 5000: expected <= 4096`. In a `constexpr` context, the build fails instead. |
-| `ChannelID::try_from(v)` | Untrusted input: user text, network, files | Returns `std::nullopt` |
-
-Compile-time checking costs nothing at runtime and catches mistakes before the
-program even exists:
-
-```cpp
-constexpr ChannelID default_channel{14};   // fine
-constexpr ChannelID oops{5000};            // error: rule_violated<vetted::AtMost<4096>>
-```
-
-## Build and run
+`examples/` holds a small radio-control program that exercises everything
+above: the before-and-after call chain, the parsing boundary, structs of
+validated fields, and one line per rule in the toolbox.
 
 ```sh
 cmake -S . -B build && cmake --build build && ./build/vetted_example
@@ -267,74 +194,12 @@ To watch the compiler reject a bad constant:
 cmake -S . -B build -DDEMO_COMPILE_ERROR=ON && cmake --build build
 ```
 
-The error message names the rule that broke:
-
-```
-error: constexpr variable 'never_compiles' must be initialized by a constant expression
-note: non-constexpr function 'rule_violated<vetted::AtMost<4096>>' cannot be used in a constant expression
-note: in call to 'enforce<vetted::AtMost<4096>>(5000)'
-```
-
-## Is this safer? Is it faster?
-
-Safer, yes. You cannot pass a raw `int16_t` where a `ChannelID` is expected,
-so forgetting to validate is a compile error rather than a bug that ships. The
-rule lives in one line, so changing 4096 to 8192 updates every layer at once.
-A function that takes `ChannelID` is declaring its assumptions in its
-signature, which makes it easier to review. And the only way in is the
-`explicit` constructor, so every place a raw value becomes a trusted one is
-greppable.
-
-There are limits. The guarantee is only as good as the rules, so test them.
-A rule also promises exactly what it says and no more. An early version of
-this example had `BlockOffset = Validated<int64_t, AtLeast<0>>` and then
-computed `offset + size`. `INT64_MAX` is a perfectly valid `BlockOffset` under
-that rule, and the addition overflowed. The type never claimed the sum would
-fit; the function assumed it. The fix is either to make the type promise what
-the function needs (`BlockOffset` is now bounded by `INT64_MAX - kMaxFFTSize`)
-or to validate the pair together (`IQBlock`).
-
-Arithmetic on a validated value produces a plain `T`. That is correct, since
-`offset + size` is not a `BlockOffset`, but it means the proof doesn't
-propagate through math. The type says "this number is in range" and nothing
-else; it is not memory safety or thread safety. And if someone adds an
-"unchecked" constructor for convenience, the whole thing quietly turns back
-into a plain `int`.
-
-Faster, a little, and only because there is less to do. Compiling the
-three-layer chain both ways at `-O2` on arm64:
-
-| | Old way, per layer | Validated, per layer |
-|---|---|---|
-| Hot path | Range check, branch, tail call (6 instructions) | Sign-extend, tail call (2 instructions) |
-| Cold path | An exception-throwing block in every function | None |
-| Argument passing | `int16_t` in a register | `int16_t` in a register |
-
-The wrapper is free: `ChannelID` is the same size as `int16_t`, trivially
-copyable and trivially destructible, so it passes in registers exactly like
-the raw integer. A `constexpr ChannelID` is checked at build time and emits no
-code at all. The `requirement()` strings only run when a check fails; the success
-path never touches them.
-
-A correctly predicted branch is nearly free on a modern CPU, so the gain per
-call is small. It adds up in deep call chains and hot loops, not in code that
-runs once. And if the old code already validated only at the boundary, there
-is nothing to remove. The reason to use this is safety. The speed is a side
-effect.
-
-## Things worth knowing
-
-- Reading out is free and only going in is guarded. A `Validated<T>` converts
-  back to a plain `T` implicitly, so arithmetic and printing just work. You can
-  never get a `Validated` from a `T` without running the rules, because the
-  constructor is `explicit`.
-- There is no default constructor and there are no setters, so once built the
-  value can't be changed into something invalid.
-- Rules are ordinary code. `passes` runs at compile time when it can and at
-  runtime when it must, and nothing is duplicated between the two paths.
-- The examples use integer types because the error messages call
-  `std::to_string`. For other value types, swap that for whatever formatting
-  makes sense.
+| Path | What's in it |
+|---|---|
+| `include/vetted.hpp` | The whole library. Everything is in `namespace vetted`. |
+| `examples/domain.hpp` | The example's types: `ChannelID`, `FFTSize`, `Baud`, ... one line each, plus structs of them |
+| `examples/main.cc` | The call chain before and after, the parsing boundary, and the demo |
+| `docs/` | Rules in depth, validated types in structs, and the safety and performance notes |
 
 ## License
 
