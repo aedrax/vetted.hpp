@@ -209,6 +209,29 @@ same guarantee as its parts, its layout is identical to the raw version, and a
 rule can span several fields at once. Wire formats stay raw and convert once
 at the boundary. See [docs/structs.md](docs/structs.md).
 
+## Refining a type
+
+A type can take more rules without repeating the ones it has:
+
+```cpp
+using ChannelID  = Validated<int16_t, Positive, AtMost<4096>>;
+using VhfChannel = ChannelID::With<AtMost<100>>;
+```
+
+A `VhfChannel` is accepted wherever a `ChannelID` is, with no conversion
+written and nothing re-checked, because its rules include every `ChannelID`
+rule. Going the other way is explicit, like going in from a raw value, and
+runs only the rule a `ChannelID` did not already prove:
+
+```cpp
+void tune_vhf(VhfChannel channel) { write_register(channel); }   // takes a ChannelID: fine
+
+if (auto vhf = VhfChannel::try_from(channel)) tune_vhf(*vhf);    // checks AtMost<100> only
+```
+
+Rules are matched by type, so `Between<0, 100>` and the pair `AtLeast<0>,
+AtMost<100>` count as different rules. Order in the list does not matter.
+
 ## Limits
 
 - The guarantee is only as good as the rules, so test them.

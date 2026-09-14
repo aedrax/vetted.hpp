@@ -62,6 +62,42 @@ using BurstLength = Validated<int, Named<AnyOf<AllOf<PowerOfTwo, AtMost<64>>, In
                                          "a power of two up to 64, or exactly 1000">>;
 ```
 
+## Refining a type
+
+`With` adds rules to an existing type without repeating the ones it has:
+
+```cpp
+using ChannelID  = Validated<int16_t, Positive, AtMost<4096>>;
+using VhfChannel = ChannelID::With<AtMost<100>>;
+// the same as Validated<int16_t, Positive, AtMost<4096>, AtMost<100>>
+```
+
+Between two `Validated` types of the same `T`, conversion is decided by the
+rule lists:
+
+- **Widening** is implicit and free. Every `ChannelID` rule is in the
+  `VhfChannel` list, so a `VhfChannel` converts to a `ChannelID` with nothing
+  checked, and a function that takes a `ChannelID` accepts a `VhfChannel`.
+- **Narrowing** is explicit, and runs only the rules the source did not
+  prove. `VhfChannel{channel}` throws if `AtMost<100>` fails,
+  `VhfChannel::try_from(channel)` returns `nullopt`. Neither re-runs
+  `Positive` or `AtMost<4096>`.
+
+```cpp
+void tune_vhf(VhfChannel channel) {
+    write_register(channel);                     // takes a ChannelID: implicit
+}
+
+if (auto vhf = VhfChannel::try_from(channel)) {  // checks AtMost<100> only
+    tune_vhf(*vhf);
+}
+```
+
+Rules are matched by type. `Between<0, 100>` and the pair `AtLeast<0>,
+AtMost<100>` mean the same thing, but they are different types, so a
+`Validated<int, AtLeast<0>, AtMost<100>>` does not widen to a
+`Validated<int, Between<0, 100>>`. Order in the list does not matter.
+
 ## Rules over containers and text
 
 `Validated<T>` is not limited to numbers. The container rules work for any

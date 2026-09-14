@@ -24,6 +24,11 @@ constexpr int32_t kMaxFFTSize = 65536;
 constexpr int64_t kMaxBlockOffset = std::numeric_limits<int64_t>::max() - kMaxFFTSize;
 
 using ChannelID   = Validated<int16_t, Positive, AtMost<4096>>;
+
+// Channels 1..100 are the VHF band. A VhfChannel is a ChannelID with one more
+// rule, so it is accepted wherever a ChannelID is, with no re-check. Going the
+// other way is explicit: VhfChannel::try_from(channel).
+using VhfChannel  = ChannelID::With<AtMost<100>>;
 using BlockOffset = Validated<int64_t, AtLeast<0>, AtMost<kMaxBlockOffset>>;
 using FFTSize     = Validated<int32_t, PowerOfTwo, AtMost<kMaxFFTSize>>;
 using Baud        = Validated<int32_t, In<9600, 19200, 38400, 115200>>;
