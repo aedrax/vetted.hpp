@@ -123,12 +123,14 @@ note: because 'Rule::requirement()' would be invalid: no member named 'requireme
 
 ## The toolbox
 
-`vetted.hpp` ships with these. Every one is three lines, so add your own freely.
+`vetted.hpp` ships with these. Most are three lines, so add your own freely.
 
 | Rule | Passes when | Typical use |
 |---|---|---|
 | `Positive` | `v > 0` | counts, sizes |
+| `NonNegative` | `v >= 0` | offsets, delays |
 | `NonZero` | `v != 0` | divisors, strides (negative allowed) |
+| `Even`, `Odd` | `v % 2 == 0`, `v % 2 != 0` | sample pairs, filter taps |
 | `AtLeast<N>`, `AtMost<N>` | `v >= N`, `v <= N` | closed ranges |
 | `GreaterThan<N>`, `LessThan<N>` | `v > N`, `v < N` | open ranges, `[0, size)` |
 | `Between<Lo, Hi>` | both bounds inclusive | percentages, channels |
@@ -137,10 +139,49 @@ note: because 'Rule::requirement()' would be invalid: no member named 'requireme
 | `PowerOfTwo` | one bit set | FFT sizes, buffer sizes |
 | `MultipleOf<N>`, `Aligned<N>` | `v % N == 0` | DMA lengths, addresses |
 | `FitsInBits<N>` | `0 <= v < 2^N` | register fields |
+| `FitsIn<U>` | `v` is representable in integer type `U` | a safe narrowing cast, `FitsIn<int8_t>` |
 | `OnlyBits<Mask>` | no bits set outside `Mask` | flag words |
+| `HasBits<Mask>` | every bit in `Mask` set | a required enable bit |
 | `Finite` | not NaN, not infinity | any float from outside. Put it first. |
+| `NotNull` | `p != nullptr` | raw and copyable smart pointers. Put it first. |
+| `PortNumber` | `1 <= v <= 65535` | with `Hostname` or `IpAddress` |
 | `AllOf<R...>`, `AnyOf<R...>`, `Not<R>` | combine other rules | anything the above can't say alone |
+| `Named<R, "text">` | `R` passes; the message says `"text"` | a readable message for a nested combinator |
 | `Satisfies<lambda, "text">` | the lambda returns true | one-offs that don't deserve a struct |
+
+For containers, any `T` with a `size()` you can iterate: strings, vectors, arrays, spans.
+
+| Rule | Passes when |
+|---|---|
+| `NonEmpty` | `size() != 0` |
+| `SizeIs<N>`, `SizeAtLeast<N>`, `SizeAtMost<N>` | `size()` compared with `N` |
+| `SizeBetween<Lo, Hi>` | both bounds inclusive |
+| `Each<R>` | every element passes `R`, so `Each<Between<-2048, 2047>>` |
+| `Sorted` | ascending, equal neighbours allowed |
+| `Unique` | no two elements equal |
+
+For text, any `T` that converts to `std::string_view`. The named shapes check
+the form of the text, at compile time when it is a constant. They do not
+resolve names or cover every corner of the RFCs. Each rule states in the header
+exactly what it accepts.
+
+| Rule | Passes when |
+|---|---|
+| `StartsWith<"...">`, `EndsWith<"...">`, `Contains<"...">` | the text has that prefix, suffix or part |
+| `OnlyChars<"...">` | every character is in the set |
+| `Printable` | every character is `0x20..0x7E`: no control characters, nothing outside ASCII |
+| `Utf8` | well-formed UTF-8. Also takes a container of bytes. |
+| `Hostname` | dot-separated labels of letters, digits and hyphens. `localhost` passes. |
+| `Ipv4Address`, `Ipv6Address`, `IpAddress` | four dotted octets; eight hex groups with one optional `::`; either |
+| `EmailAddress` | `local@domain` with at least one dot in the domain |
+| `Url` | a scheme, a colon, and something after it. No whitespace. |
+| `MacAddress` | six hex pairs, all `:` or all `-` separated |
+| `Uuid` | `8-4-4-4-12` hex digits, any case |
+
+```cpp
+using UpdateUrl = Validated<std::string_view, Url, StartsWith<"https://">>;
+constexpr UpdateUrl default_update{"https://example.org/fw"};   // the compiler checks the shape
+```
 
 The last one is the escape hatch, and it brings back the lambda style:
 

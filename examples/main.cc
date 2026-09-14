@@ -246,7 +246,9 @@ int main() {
     auto show = [](std::string_view name, auto make) {
         try {
             auto value = make();  // may throw, nothing printed until it succeeds
-            std::cout << "  " << name << ": ok " << value << "\n";
+            std::cout << "  " << name << ": ok";
+            if constexpr (requires { std::cout << value; }) std::cout << " " << value;
+            std::cout << "\n";
         } catch (const std::invalid_argument& e) {
             std::cout << "  " << name << ": " << e.what() << "\n";
         }
@@ -265,6 +267,59 @@ int main() {
     show("Gain{NAN}",         [] { return Gain{NAN}; });
     show("PllDivider{1}",     [] { return PllDivider{1}; });
     show("PllDivider{7}",     [] { return PllDivider{7}; });
+    show("Delay{0}",          [] { return Delay{0}; });
+    show("Delay{-5}",         [] { return Delay{-5}; });
+    show("IQCount{1024}",     [] { return IQCount{1024}; });
+    show("IQCount{1023}",     [] { return IQCount{1023}; });
+    show("TapCount{63}",      [] { return TapCount{63}; });
+    show("TapCount{64}",      [] { return TapCount{64}; });
+    show("TrimOffset{-100}",  [] { return TrimOffset{-100}; });
+    show("TrimOffset{200}",   [] { return TrimOffset{200}; });
+    show("CtrlWord{0x05}",    [] { return CtrlWord{0x05}; });
+    show("CtrlWord{0x04}",    [] { return CtrlWord{0x04}; });
+    show("DeviceName{\"sdr0\"}", [] { return DeviceName{"sdr0"}; });
+    show("DeviceName{nullptr}", [] { return DeviceName{nullptr}; });
+
+    std::cout << "\n== Sizes and text ==\n";
+    // The same rules, at compile time. The compiler parses the address.
+    constexpr StreamTarget loopback{"::1"};
+    constexpr UpdateUrl default_update{"https://example.org/fw/sdr-fw-v2.bin"};
+    std::cout << "  compile-time: " << loopback << ", " << default_update << "\n";
+    show("Payload{1, 2, 3}",  [] { return Payload{{1, 2, 3}}; });
+    show("Payload{}",         [] { return Payload{{}}; });
+    show("Samples{0, 2047, -2048}", [] { return Samples{{0, 2047, -2048}}; });
+    show("Samples{0, 2048}",  [] { return Samples{{0, 2048}}; });
+    show("ScanList{1, 5, 9}", [] { return ScanList{{ChannelID{1}, ChannelID{5}, ChannelID{9}}}; });
+    show("ScanList{1, 9, 5}", [] { return ScanList{{ChannelID{1}, ChannelID{9}, ChannelID{5}}}; });
+    show("ScanList{1, 5, 5}", [] { return ScanList{{ChannelID{1}, ChannelID{5}, ChannelID{5}}}; });
+    show("StreamPort{5000}",  [] { return StreamPort{5000}; });
+    show("StreamPort{0}",     [] { return StreamPort{0}; });
+    show("Label{\"VFO A\"}",     [] { return Label{"VFO A"}; });
+    show("Label{\"VFO\\tA\"}",   [] { return Label{"VFO\tA"}; });
+    show("DeviceMac{\"00:1a:2b:3c:4d:5e\"}", [] { return DeviceMac{"00:1a:2b:3c:4d:5e"}; });
+    show("DeviceMac{\"00:1a:2b:3c:4d\"}",    [] { return DeviceMac{"00:1a:2b:3c:4d"}; });
+    show("SessionId{\"123e4567-e89b-12d3-a456-426614174000\"}",
+         [] { return SessionId{"123e4567-e89b-12d3-a456-426614174000"}; });
+    show("SessionId{\"123e4567\"}", [] { return SessionId{"123e4567"}; });
+    show("Comment{\"caf\\xC3\\xA9\"}", [] { return Comment{"caf\xC3\xA9"}; });
+    show("Comment{\"caf\\xC3\"}",       [] { return Comment{"caf\xC3"}; });  // truncated sequence
+    show("CountryCode{\"US\"}",  [] { return CountryCode{"US"}; });
+    show("CountryCode{\"USA\"}", [] { return CountryCode{"USA"}; });
+    show("Callsign{\"W1AW\"}",   [] { return Callsign{"W1AW"}; });
+    show("Callsign{\"w1aw\"}",   [] { return Callsign{"w1aw"}; });
+    show("Firmware{\"sdr-fw-v2.bin\"}", [] { return Firmware{"sdr-fw-v2.bin"}; });
+    show("Firmware{\"sdr-fw-v2.hex\"}", [] { return Firmware{"sdr-fw-v2.hex"}; });
+    show("ControlHost{\"sdr.local\"}",  [] { return ControlHost{"sdr.local"}; });
+    show("ControlHost{\"sdr local\"}",  [] { return ControlHost{"sdr local"}; });
+    show("StreamTarget{\"192.0.2.1\"}",  [] { return StreamTarget{"192.0.2.1"}; });
+    show("StreamTarget{\"192.0.2.256\"}", [] { return StreamTarget{"192.0.2.256"}; });
+    show("StreamTarget{\"2001:db8::1\"}", [] { return StreamTarget{"2001:db8::1"}; });
+    show("StreamTarget{\"2001:db8:::1\"}", [] { return StreamTarget{"2001:db8:::1"}; });
+    show("Operator{\"op@example.org\"}", [] { return Operator{"op@example.org"}; });
+    show("Operator{\"op@example\"}",     [] { return Operator{"op@example"}; });
+    show("UpdateUrl{\"https://example.org/fw\"}", [] { return UpdateUrl{"https://example.org/fw"}; });
+    show("UpdateUrl{\"http://example.org/fw\"}",  [] { return UpdateUrl{"http://example.org/fw"}; });
+    show("UpdateUrl{\"example.org/fw\"}",         [] { return UpdateUrl{"example.org/fw"}; });
 
     return 0;
 }
