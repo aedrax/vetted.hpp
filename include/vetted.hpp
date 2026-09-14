@@ -53,6 +53,16 @@ namespace vetted {
 //                            *build* instead.
 //   - Validated::try_from(v) returns std::nullopt on failure. Use it at the
 //                            boundary, for untrusted input.
+//
+// A type can be refined with more rules, without repeating the ones it has:
+//
+//     using LowChannel = ChannelID::With<AtMost<100>>;
+//
+// Between two Validated types of the same T, conversion is decided by the
+// rule lists. If every rule of the target is in the source, conversion is
+// implicit and free: a LowChannel is accepted wherever a ChannelID is. If
+// not, it is explicit (Validated{other} or try_from(other)) and runs only the
+// rules the source did not already prove.
 
 // What it takes to be a Rule for values of type T. This is a compile-time
 // contract only so it costs nothing at runtime, and a struct that doesn't meet
@@ -88,6 +98,11 @@ std::string describe_value(const T& v) {
     }
 }
 
+// True if Rule is one of Others. Rules are compared as types, so Between<0, 100>
+// and the pair AtLeast<0>, AtMost<100> count as different rules.
+template <typename Rule, typename... Others>
+constexpr bool one_of = (std::is_same_v<Rule, Others> || ...);
+
 template <typename T, RuleFor<T>... Rules>   // every Rule must satisfy RuleFor<T>
 class Validated {
     T value_;
@@ -110,6 +125,13 @@ class Validated {
         return v;
     }
 
+    // Runs only the rules that a Validated<T, Proven...> did not already run.
+    template <typename... Proven>
+    static constexpr T checked_beyond(T v) {
+        ([&] { if constexpr (!one_of<Rules, Proven...>) enforce<Rules>(v); }(), ...);
+        return v;
+    }
+
     struct already_checked {};
     constexpr Validated(T v, already_checked) : value_(v) {}
 
@@ -122,6 +144,34 @@ public:
     static constexpr std::optional<Validated> try_from(T v) {
         if ((Rules::passes(v) && ...)) {
             return Validated{v, already_checked{}};
+        }
+        return std::nullopt;
+    }
+
+    // This type with more rules. ChannelID::With<AtMost<100>> is
+    // Validated<int16_t, Positive, AtMost<4096>, AtMost<100>>.
+    template <RuleFor<T>... More>
+    using With = Validated<T, Rules..., More...>;
+
+    // Widening: the other type's rules include all of ours, so there is
+    // nothing to check. Implicit, so the narrower type is accepted wherever
+    // the wider one is.
+    template <RuleFor<T>... Proven>
+        requires (one_of<Rules, Proven...> && ...)
+    constexpr Validated(const Validated<T, Proven...>& other) : value_(other.get()) {}
+
+    // Narrowing: the other type lacks some of our rules. Explicit, like the
+    // constructor from a raw T, and runs only the rules it lacks.
+    template <RuleFor<T>... Proven>
+        requires (!(one_of<Rules, Proven...> && ...))
+    constexpr explicit Validated(const Validated<T, Proven...>& other)
+        : value_(checked_beyond<Proven...>(other.get())) {}
+
+    // Non-throwing narrowing. Runs only the rules the other type lacks.
+    template <RuleFor<T>... Proven>
+    static constexpr std::optional<Validated> try_from(const Validated<T, Proven...>& other) {
+        if (((one_of<Rules, Proven...> || Rules::passes(other.get())) && ...)) {
+            return Validated{other.get(), already_checked{}};
         }
         return std::nullopt;
     }

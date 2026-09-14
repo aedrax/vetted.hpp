@@ -61,6 +61,13 @@ void handle_request(ChannelID channel) {
     tune_radio(channel);
 }
 
+// A refined type. Only the VHF front end needs the extra rule; everything a
+// VhfChannel is passed to still takes a plain ChannelID.
+void tune_vhf(VhfChannel channel) {
+    std::cout << "  VHF front end on channel " << channel << "\n";
+    write_register(channel);  // VhfChannel -> ChannelID: implicit, nothing to check
+}
+
 // A few more functions that take validated types and can do math freely.
 
 // Arithmetic on validated values, BlockOffset is bounded so the sum can't overflow.
@@ -231,6 +238,18 @@ int main() {
         process_iq_block(past_the_end);
     } catch (const std::invalid_argument& e) {
         std::cout << "  IQBlock{1048476, 512} threw: " << e.what() << "\n";
+    }
+
+    std::cout << "\n== Refining a type ==\n";
+    constexpr VhfChannel vhf{42};
+    handle_request(vhf);  // a VhfChannel is a ChannelID, so the whole chain accepts it
+    for (ChannelID channel : {ChannelID{42}, ChannelID{2048}}) {
+        // Narrowing runs only the rule ChannelID did not prove, AtMost<100>.
+        if (auto narrowed = VhfChannel::try_from(channel)) {
+            tune_vhf(*narrowed);
+        } else {
+            std::cout << "  channel " << channel << " is not VHF\n";
+        }
     }
 
     std::cout << "\n== Several types, one pattern ==\n";
