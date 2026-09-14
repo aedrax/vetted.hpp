@@ -19,12 +19,11 @@
 // Everything lives in namespace vetted. Requires C++20.
 #pragma once
 
-#include <algorithm>
 #include <concepts>
 #include <cstddef>
 #include <iterator>
+#include <iosfwd>
 #include <optional>
-#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -138,7 +137,9 @@ public:
 
     // Prints as a plain T. The conversion above is not enough here, because the
     // stream operator for std::string_view (and many other types) is a template
-    // and templates do not see through user conversions.
+    // and templates do not see through user conversions. Only <iosfwd> is
+    // needed: the body is resolved where it is called, and the caller has the
+    // stream header.
     template <typename C, typename Tr>
     friend std::basic_ostream<C, Tr>& operator<<(std::basic_ostream<C, Tr>& os, const Validated& v)
         requires requires { os << v.value_; }
@@ -411,8 +412,17 @@ struct Each {
 };
 
 // Ascending, equal neighbours allowed. Add Unique for strictly ascending.
+// A hand-written loop, because <algorithm> alone is a third of the compile
+// time of this header.
 struct Sorted {
-    static constexpr bool passes(const auto& c) { return std::is_sorted(std::begin(c), std::end(c)); }
+    static constexpr bool passes(const auto& c) {
+        auto it = std::begin(c);
+        if (it == std::end(c)) return true;
+        for (auto prev = it++; it != std::end(c); prev = it++) {
+            if (*it < *prev) return false;
+        }
+        return true;
+    }
     static std::string requirement() { return "sorted"; }
 };
 
