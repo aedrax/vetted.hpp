@@ -48,8 +48,9 @@ propagate through math. Reading out is free and only going in is guarded.
 
 - There is no default constructor and there are no setters, so once built the
   value can't be changed into something invalid.
-- The only way in is the `explicit` constructor or `try_from`. If someone adds
-  an "unchecked" constructor for convenience, the whole thing quietly turns
-  back into a plain `int`.
+- The only way in is the `explicit` constructor, `try_from`, or implicit
+  widening from a more refined type, which is safe because the source type
+  already ran every target rule. If someone adds an "unchecked" constructor
+  for convenience, the whole thing quietly turns back into a plain `int`.
 - The type says "this number is in range" and nothing else; it is not memory
   safety or thread safety.
