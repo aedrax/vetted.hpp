@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <iterator>
 #include <iosfwd>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -311,7 +312,15 @@ using Aligned = MultipleOf<N>;
 template <std::size_t N>
 struct FitsInBits {
     static constexpr bool passes(auto v) {
-        return v >= 0 && static_cast<unsigned long long>(v) < (1ULL << N);
+        if constexpr (N >= std::numeric_limits<unsigned long long>::digits) {
+            // The upper bound 2^N is wider than `unsigned long long`, so every
+            // non-negative value already fits; only the sign check matters.
+            // The shift would be undefined behavior at this width, so it is
+            // not instantiated here (this also silences -Wshift-count-overflow).
+            return v >= 0;
+        } else {
+            return v >= 0 && static_cast<unsigned long long>(v) < (1ULL << N);
+        }
     }
     static std::string requirement() { return "representable in " + std::to_string(N) + " bits"; }
 };
