@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="title desc">
   <title id="title">vetted.hpp</title>
-  <desc id="desc">A single-header C++20 library for validated types. Raw input is checked once at a boundary; a value that passes becomes a ChannelID and flows through handle_request, tune_radio and write_register without being re-checked. A value that fails is rejected at the boundary.</desc>
+  <desc id="desc">A single-header C++20 library for validated types. Raw input is checked once at a boundary; a value that passes becomes a Quantity and flows through handle_request, add_to_cart and reserve_stock without being re-checked. A value that fails is rejected at the boundary.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 z" fill="#8a8f98"/>
@@ -18,15 +18,15 @@
     <text x="-3" y="82" font-size="76" font-weight="700" letter-spacing="-2">vetted<tspan fill="#8a8f98">.hpp</tspan></text>
     <text x="0" y="146" font-size="27">Check a value once, where it enters.</text>
     <text x="0" y="182" font-size="27">The type carries the proof after that.</text>
-    <text x="0" y="246" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#8a8f98">using ChannelID =</text>
-    <text x="0" y="272" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#8a8f98">    Validated&lt;int16_t, <tspan fill="#f2efe8">Positive</tspan>, <tspan fill="#f2efe8">AtMost&lt;4096&gt;</tspan>&gt;;</text>
+    <text x="0" y="246" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#8a8f98">using Quantity =</text>
+    <text x="0" y="272" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" fill="#8a8f98">    Validated&lt;int16_t, <tspan fill="#f2efe8">Positive</tspan>, <tspan fill="#f2efe8">AtMost&lt;1000&gt;</tspan>&gt;;</text>
   </g>
 
   <!-- proof: one boundary, one check, three layers with no re-check -->
   <g id="project-proof" transform="translate(600 62)" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
     <!-- column labels -->
     <text x="0" y="0" font-size="18" fill="#8a8f98">raw int16_t</text>
-    <text x="240" y="0" font-size="18" fill="#8a8f98">ChannelID</text>
+    <text x="240" y="0" font-size="18" fill="#8a8f98">Quantity</text>
     <text x="190" y="-18" font-size="16" fill="#8a8f98" text-anchor="middle">checked once</text>
 
     <!-- the boundary -->
@@ -34,7 +34,7 @@
 
     <!-- passing value -->
     <rect x="0" y="22" width="120" height="44" rx="10" fill="#14181d" stroke="#262b31" stroke-width="2"/>
-    <text x="60" y="51" font-size="20" fill="#f2efe8" text-anchor="middle">"2048"</text>
+    <text x="60" y="51" font-size="20" fill="#f2efe8" text-anchor="middle">"250"</text>
     <line x1="120" y1="44" x2="176" y2="44" stroke="#3fb950" stroke-width="2"/>
     <circle cx="190" cy="44" r="13" fill="#0b0d10" stroke="#3fb950" stroke-width="2"/>
     <path d="M184 44 l4 4 l8 -9" fill="none" stroke="#3fb950" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -43,17 +43,17 @@
     <!-- the call chain -->
     <g id="chain">
       <rect x="240" y="22" width="320" height="44" rx="10" fill="#14181d" stroke="#3fb950" stroke-width="2"/>
-      <text x="256" y="51" font-size="19" fill="#f2efe8">handle_request(ChannelID)</text>
+      <text x="256" y="51" font-size="19" fill="#f2efe8">handle_request(Quantity)</text>
       <line x1="400" y1="66" x2="400" y2="94" stroke="#8a8f98" stroke-width="2" marker-end="url(#arrow)"/>
       <text x="414" y="86" font-size="16" fill="#8a8f98">no re-check</text>
 
       <rect x="240" y="96" width="320" height="44" rx="10" fill="#14181d" stroke="#262b31" stroke-width="2"/>
-      <text x="256" y="125" font-size="19" fill="#f2efe8">tune_radio(ChannelID)</text>
+      <text x="256" y="125" font-size="19" fill="#f2efe8">add_to_cart(Quantity)</text>
       <line x1="400" y1="140" x2="400" y2="168" stroke="#8a8f98" stroke-width="2" marker-end="url(#arrow)"/>
       <text x="414" y="160" font-size="16" fill="#8a8f98">no re-check</text>
 
       <rect x="240" y="170" width="320" height="44" rx="10" fill="#14181d" stroke="#262b31" stroke-width="2"/>
-      <text x="256" y="199" font-size="19" fill="#f2efe8">write_register(ChannelID)</text>
+      <text x="256" y="199" font-size="19" fill="#f2efe8">reserve_stock(Quantity)</text>
     </g>
 
     <!-- failing value -->
@@ -62,6 +62,6 @@
     <line x1="120" y1="270" x2="176" y2="270" stroke="#f85149" stroke-width="2"/>
     <circle cx="190" cy="270" r="13" fill="#0b0d10" stroke="#f85149" stroke-width="2"/>
     <path d="M185 265 l10 10 M195 265 l-10 10" fill="none" stroke="#f85149" stroke-width="2.5" stroke-linecap="round"/>
-    <text x="214" y="276" font-size="18" fill="#f85149">rejected: expected &lt;= 4096</text>
+    <text x="214" y="276" font-size="18" fill="#f85149">rejected: expected &lt;= 1000</text>
   </g>
 </svg>

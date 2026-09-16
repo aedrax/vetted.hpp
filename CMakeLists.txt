@@ -44,7 +44,7 @@ if(VETTED_BUILD_EXAMPLES)
     # Turn this on to watch the compiler reject an invalid constexpr value:
     #     cmake -S . -B build -DDEMO_COMPILE_ERROR=ON && cmake --build build
     option(DEMO_COMPILE_ERROR
-           "Compile a deliberately invalid constexpr ChannelID to see the build fail"
+           "Compile a deliberately invalid constexpr Quantity to see the build fail"
            OFF)
     if(DEMO_COMPILE_ERROR)
         target_compile_definitions(vetted_example PRIVATE DEMO_COMPILE_ERROR)

@@ -4,7 +4,7 @@ The snippets below assume `using namespace vetted;`, as the example code does.
 
 A rule is a struct with two static functions. `passes` returns whether a
 value passes. `requirement` returns the condition for the error message.
-`requirement` returns the bare condition ("a power of two", "<= 4096").
+`requirement` returns the bare condition ("a power of two", "<= 1000").
 `Validated` adds "expected" when it builds the message, so combinators can
 nest without repeated wording.
 
@@ -30,7 +30,7 @@ struct AtMost {
 List rules. They run in order and stop at the first failure:
 
 ```cpp
-using FFTSize = Validated<int32_t, PowerOfTwo, AtMost<65536>>;
+using ChunkSize = Validated<int32_t, PowerOfTwo, AtMost<65536>>;
 ```
 
 Or bundle them into a new rule, so the intent has a name:
@@ -42,24 +42,24 @@ using Between = AllOf<AtLeast<Lo>, AtMost<Hi>>;
 using Percent = Validated<int, Between<0, 100>>;
 ```
 
-`AllOf`, `AnyOf` and `Not` nest to any depth, so an odd hardware constraint
-still reads as one line:
+`AllOf`, `AnyOf` and `Not` nest to any depth, so an odd business rule still
+reads as one line:
 
 ```cpp
-// 0..31, except the pins reserved for boot and the UART
-using GpioPin     = Validated<int, Between<0, 31>, NotIn<0, 1, 14, 15>>;
+// a floor in a building with no floor 0 and no floor 13
+using Floor  = Validated<int, Between<-2, 50>, NotIn<0, 13>>;
 
-// a small power of two, or exactly the hardware maximum
-using BurstLength = Validated<int, AnyOf<AllOf<PowerOfTwo, AtMost<64>>, In<1000>>>;
+// a coupon: a multiple of 5 percent up to 50, or exactly 100 (free)
+using Coupon = Validated<int, AnyOf<AllOf<MultipleOf<5>, AtMost<50>>, In<100>>>;
 ```
 
-A nested combinator builds its message from its parts. `BurstLength{96}`
-says "expected a power of two and <= 64, or one of {1000}". Wrap it in
-`Named` to keep the check and replace the message:
+A nested combinator builds its message from its parts. `Coupon{7}` says
+"expected a multiple of 5 and <= 50, or one of {100}". Wrap it in `Named` to
+keep the check and replace the message:
 
 ```cpp
-using BurstLength = Validated<int, Named<AnyOf<AllOf<PowerOfTwo, AtMost<64>>, In<1000>>,
-                                         "a power of two up to 64, or exactly 1000">>;
+using Coupon = Validated<int, Named<AnyOf<AllOf<MultipleOf<5>, AtMost<50>>, In<100>>,
+                                    "a multiple of 5 up to 50, or exactly 100">>;
 ```
 
 ## Refining a type
@@ -67,29 +67,29 @@ using BurstLength = Validated<int, Named<AnyOf<AllOf<PowerOfTwo, AtMost<64>>, In
 `With` adds rules to an existing type without a repeat of the rules it has:
 
 ```cpp
-using ChannelID  = Validated<int16_t, Positive, AtMost<4096>>;
-using VhfChannel = ChannelID::With<AtMost<100>>;
-// the same as Validated<int16_t, Positive, AtMost<4096>, AtMost<100>>
+using Quantity     = Validated<int16_t, Positive, AtMost<1000>>;
+using GiftQuantity = Quantity::With<AtMost<5>>;
+// the same as Validated<int16_t, Positive, AtMost<1000>, AtMost<5>>
 ```
 
 Between two `Validated` types with the same `T`, the rule lists decide the
 conversion:
 
-- Widening is implicit and free. Every `ChannelID` rule is in the
-  `VhfChannel` list, so a `VhfChannel` converts to a `ChannelID` with no
-  check. A function that takes a `ChannelID` accepts a `VhfChannel`.
+- Widening is implicit and free. Every `Quantity` rule is in the
+  `GiftQuantity` list, so a `GiftQuantity` converts to a `Quantity` with no
+  check. A function that takes a `Quantity` accepts a `GiftQuantity`.
 - Narrowing is explicit, and runs only the rules the source did not prove.
-  `VhfChannel{channel}` throws if `AtMost<100>` fails.
-  `VhfChannel::try_from(channel)` returns `nullopt`. Neither one re-runs
-  `Positive` or `AtMost<4096>`.
+  `GiftQuantity{quantity}` throws if `AtMost<5>` fails.
+  `GiftQuantity::try_from(quantity)` returns `nullopt`. Neither one re-runs
+  `Positive` or `AtMost<1000>`.
 
 ```cpp
-void tune_vhf(VhfChannel channel) {
-    write_register(channel);                     // takes a ChannelID: implicit
+void gift_wrap(GiftQuantity quantity) {
+    reserve_stock(quantity);                          // takes a Quantity: implicit
 }
 
-if (auto vhf = VhfChannel::try_from(channel)) {  // checks AtMost<100> only
-    tune_vhf(*vhf);
+if (auto gift = GiftQuantity::try_from(quantity)) {   // checks AtMost<5> only
+    gift_wrap(*gift);
 }
 ```
 
@@ -106,24 +106,24 @@ conversion.
 that converts to `std::string_view`:
 
 ```cpp
-using Payload  = Validated<std::vector<uint8_t>, NonEmpty, SizeAtMost<256>>;
-using Samples  = Validated<std::vector<int16_t>, NonEmpty, Each<Between<-2048, 2047>>>;
-using ScanList = Validated<std::vector<ChannelID>, NonEmpty, Sorted, Unique>;
-using Callsign = Validated<std::string_view, SizeBetween<3, 8>,
-                                             OnlyChars<"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789">>;
-using Target   = Validated<std::string_view, IpAddress>;   // IPv4 or IPv6
+using Attachment = Validated<std::vector<uint8_t>, NonEmpty, SizeAtMost<1024>>;
+using Scores     = Validated<std::vector<int16_t>, NonEmpty, Each<Between<0, 100>>>;
+using Milestones = Validated<std::vector<Percent>, NonEmpty, Sorted, Unique>;
+using Username   = Validated<std::string_view, SizeBetween<3, 16>,
+                                               OnlyChars<"abcdefghijklmnopqrstuvwxyz0123456789_">>;
+using ServerAddress = Validated<std::string_view, IpAddress>;   // IPv4 or IPv6
 ```
 
 `Each<R>` takes a rule type, so the whole toolbox applies to elements. The
-elements can be validated types themselves, as in `ScanList`. Each
-`ChannelID` passed its own rules, and the list rule adds an order.
+elements can be validated types themselves, as in `Milestones`. Each
+`Percent` passed its own rules, and the list rule adds an order.
 
 The text rules also run at compile time, so a malformed constant address or
 URL fails the build:
 
 ```cpp
-constexpr Target loopback{"::1"};      // fine
-constexpr Target oops{"2001:db8:::1"}; // error: rule_violated<AnyOf<Ipv4Address, Ipv6Address>>
+constexpr ServerAddress loopback{"::1"};      // fine
+constexpr ServerAddress oops{"2001:db8:::1"}; // error: rule_violated<AnyOf<Ipv4Address, Ipv6Address>>
 ```
 
 `Hostname`, `Ipv4Address`, `Ipv6Address`, `EmailAddress`, `Url`, `MacAddress`
@@ -141,8 +141,8 @@ through a null pointer.
 ## Rules over structs
 
 `Validated<T>` works for any `T`, so a rule can look at several fields at
-once. See [structs.md](structs.md) for `IQBlock`, whose rule checks that an
-offset and a size fit inside a buffer together.
+once. See [structs.md](structs.md) for `Slice`, whose rule checks that an
+offset and a length fit inside a file together.
 
 ## Error messages for other types
 

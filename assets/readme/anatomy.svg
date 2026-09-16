@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="title desc">
   <title id="title">Anatomy of a validated type</title>
-  <desc id="desc">The declaration Validated of int16_t, Positive, AtMost 4096, annotated: int16_t is the value type and reads back as a plain int16_t; Positive and AtMost are rules that run in order, and each rule is a struct with a passes function and a requirement function.</desc>
+  <desc id="desc">The declaration Validated of int16_t, Positive, AtMost 1000, annotated: int16_t is the value type and reads back as a plain int16_t; Positive and AtMost are rules that run in order, and each rule is a struct with a passes function and a requirement function.</desc>
 
   <rect width="1200" height="300" rx="20" fill="#0b0d10"/>
 
@@ -8,7 +8,7 @@
     <text x="60" y="52" font-size="18" fill="#8a8f98" letter-spacing="2">ONE LINE DECLARES A TYPE</text>
 
     <!-- the specimen; textLength pins glyph positions so the underlines line up in any monospace font -->
-    <text x="146" y="140" font-size="36" fill="#f2efe8" textLength="907" lengthAdjust="spacingAndGlyphs">Validated&lt;<tspan fill="#8a8f98">int16_t</tspan>, Positive, AtMost&lt;4096&gt;&gt;</text>
+    <text x="146" y="140" font-size="36" fill="#f2efe8" textLength="907" lengthAdjust="spacingAndGlyphs">Validated&lt;<tspan fill="#8a8f98">int16_t</tspan>, Positive, AtMost&lt;1000&gt;&gt;</text>
   </g>
 
   <!-- underline: value type (chars 10..16) -->

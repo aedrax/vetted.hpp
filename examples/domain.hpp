@@ -1,7 +1,8 @@
 // The validated types for this example, one line each.
 //
-// List rules directly (they run in order and stop at the first failure), or
-// bundle them with AllOf and Between.
+// The example is a small online shop: orders, uploads, users, and server
+// settings. List rules directly (they run in order and stop at the first
+// failure), or bundle them with AllOf and Between.
 #pragma once
 
 #include <cstdint>
@@ -16,100 +17,101 @@
 // or pull in only the names it uses.
 using namespace vetted;
 
-constexpr int32_t kMaxFFTSize = 65536;
+constexpr int32_t kMaxChunkSize = 65536;
 
-// BlockOffset is bounded so that `offset + size` can never overflow int64_t.
+// FileOffset is bounded so that `offset + length` can never overflow int64_t.
 // A rule promises exactly what it says. AtLeast<0> alone lets INT64_MAX
-// through, and the addition in process_iq_block is then undefined behavior.
-constexpr int64_t kMaxBlockOffset = std::numeric_limits<int64_t>::max() - kMaxFFTSize;
+// through, and the addition in read_slice is then undefined behavior.
+constexpr int64_t kMaxFileOffset = std::numeric_limits<int64_t>::max() - kMaxChunkSize;
 
-using ChannelID   = Validated<int16_t, Positive, AtMost<4096>>;
+using Quantity     = Validated<int16_t, Positive, AtMost<1000>>;   // items in one order line
 
-// Channels 1..100 are the VHF band. A VhfChannel is a ChannelID with one more
-// rule, so it is accepted wherever a ChannelID is, with no re-check. The other
-// direction is explicit: VhfChannel::try_from(channel).
-using VhfChannel  = ChannelID::With<AtMost<100>>;
-using BlockOffset = Validated<int64_t, AtLeast<0>, AtMost<kMaxBlockOffset>>;
-using FFTSize     = Validated<int32_t, PowerOfTwo, AtMost<kMaxFFTSize>>;
-using Baud        = Validated<int32_t, In<9600, 19200, 38400, 115200>>;
-using Percent     = Validated<int, Between<0, 100>>;
+// Gift wrap is offered for at most 5 items. A GiftQuantity is a Quantity with
+// one more rule, so it is accepted wherever a Quantity is, with no re-check.
+// The other direction is explicit: GiftQuantity::try_from(quantity).
+using GiftQuantity = Quantity::With<AtMost<5>>;
+using FileOffset   = Validated<int64_t, AtLeast<0>, AtMost<kMaxFileOffset>>;
+using ChunkSize    = Validated<int32_t, PowerOfTwo, AtMost<kMaxChunkSize>>;  // read buffers
+using ShippingDays = Validated<int32_t, In<1, 2, 5>>;                       // overnight, two-day, standard
+using Percent      = Validated<int, Between<0, 100>>;
 
-// A GPIO pin, 0..31, except the pins wired to the boot strap and the UART.
-using GpioPin     = Validated<int, Between<0, 31>, NotIn<0, 1, 14, 15>>;
+// A floor in the building. There is no floor 0 and no floor 13.
+using Floor        = Validated<int, Between<-2, 50>, NotIn<0, 13>>;
 
-// A DMA burst: either a small power of two, or exactly the hardware maximum.
-// Named replaces the message the combinators would build ("a power of two
-// and <= 64, or one of {1000}") with what it means.
-using BurstLength = Validated<int, Named<AnyOf<AllOf<PowerOfTwo, AtMost<64>>, In<1000>>,
-                                         "a power of two up to 64, or exactly 1000">>;
+// A coupon: a multiple of 5 percent up to 50, or exactly 100 (free).
+// Named replaces the message the combinators would build ("a multiple of 5
+// and <= 50, or one of {100}") with what it means.
+using Coupon       = Validated<int, Named<AnyOf<AllOf<MultipleOf<5>, AtMost<50>>, In<100>>,
+                                          "a multiple of 5 up to 50, or exactly 100">>;
 
-// One type per rule in the toolbox, so each shows up in the demo.
-using DmaLength   = Validated<int32_t, NonZero, Aligned<4>, AtMost<65536>>;  // bytes, 4-byte aligned
-using Stride      = Validated<int32_t, NonZero>;                           // may be negative
-using DacValue    = Validated<int32_t, FitsInBits<12>>;                    // 12-bit DAC register
-using LedMask     = Validated<uint16_t, OnlyBits<0x0F>>;                   // four LEDs, bits 0..3
-using BufferIndex = Validated<int, AtLeast<0>, LessThan<256>>;             // half-open [0, 256)
-using Gain        = Validated<double, Finite, GreaterThan<0.0>, AtMost<10.0>>;
-using PllDivider  = Validated<int, Satisfies<[](auto v) { return v == 1 || v % 2 == 0; },
-                                              "1 or an even number">>;
-using Delay       = Validated<int32_t, NonNegative>;                       // microseconds
-using IQCount     = Validated<int32_t, Positive, Even>;                    // I and Q come in pairs
-using TapCount    = Validated<int32_t, Positive, Odd>;                     // symmetric FIR filter
-using TrimOffset  = Validated<int32_t, FitsIn<int8_t>>;                    // read as int32, stored in an int8 register
-using CtrlWord    = Validated<uint16_t, HasBits<0x01>, OnlyBits<0x0F>>;    // bit 0 is enable and must be set
-using DeviceName  = Validated<const char*, NotNull>;
+// One type per rule in the toolbox, so each one shows up in the demo.
+using SlotMinutes  = Validated<int32_t, Positive, MultipleOf<15>, AtMost<480>>;  // meeting length
+using DiskOffset   = Validated<int64_t, NonNegative, Aligned<512>>;              // on a block boundary
+using Step         = Validated<int32_t, NonZero>;                                // for a countdown, may be negative
+using ColorChannel = Validated<int32_t, FitsInBits<8>>;                          // 0..255
+using Permissions  = Validated<uint16_t, OnlyBits<0x7>>;                         // read, write, execute
+using RowIndex     = Validated<int, AtLeast<0>, LessThan<256>>;                  // half-open [0, 256)
+using Price        = Validated<double, Finite, GreaterThan<0.0>, AtMost<1000000.0>>;
+using PlayerCount  = Validated<int, Satisfies<[](auto v) { return v == 1 || v % 2 == 0; },
+                                               "1 or an even number">>;          // solo, or pairs
+using RetryDelay   = Validated<int32_t, NonNegative>;                            // milliseconds
+using ImageWidth   = Validated<int32_t, Positive, Even>;                         // video encoders need even sizes
+using PanelSize    = Validated<int32_t, Positive, Odd>;                          // odd, so a vote cannot tie
+using Temperature  = Validated<int32_t, FitsIn<int8_t>>;                         // parsed as int, stored in one byte
+using SharePerms   = Validated<uint16_t, HasBits<0x1>, OnlyBits<0x7>>;           // bit 0 (read) must be set
+using Locale       = Validated<const char*, NotNull>;
 
 // Containers: any T with a size() that you can iterate. Text: any T that converts to string_view.
-using Payload     = Validated<std::vector<uint8_t>, NonEmpty, SizeAtMost<256>>;
-using Samples     = Validated<std::vector<int16_t>, NonEmpty, Each<Between<-2048, 2047>>>;  // 12-bit ADC
-using ScanList    = Validated<std::vector<ChannelID>, NonEmpty, Sorted, Unique>;  // elements already validated
-using StreamPort  = Validated<uint16_t, PortNumber>;
-using Label       = Validated<std::string_view, NonEmpty, SizeAtMost<16>, Printable>;  // fits the front panel
-using DeviceMac   = Validated<std::string_view, MacAddress>;
-using SessionId   = Validated<std::string_view, Uuid>;
-using Comment     = Validated<std::string, Utf8, SizeAtMost<140>>;
-using CountryCode = Validated<std::string_view, SizeIs<2>, OnlyChars<"ABCDEFGHIJKLMNOPQRSTUVWXYZ">>;
-using Callsign    = Validated<std::string_view, SizeBetween<3, 8>,
-                                                OnlyChars<"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789">>;
-using Firmware    = Validated<std::string_view, StartsWith<"sdr-">, Contains<"-v">, EndsWith<".bin">>;
-using ControlHost = Validated<std::string_view, Hostname>;
-using StreamTarget= Validated<std::string_view, IpAddress>;                // IPv4 or IPv6
-using Operator    = Validated<std::string_view, EmailAddress>;
-using UpdateUrl   = Validated<std::string_view, Url, StartsWith<"https://">>;
+using Attachment   = Validated<std::vector<uint8_t>, NonEmpty, SizeAtMost<1024>>;
+using Scores       = Validated<std::vector<int16_t>, NonEmpty, Each<Between<0, 100>>>;
+using Milestones   = Validated<std::vector<Percent>, NonEmpty, Sorted, Unique>;  // elements already validated
+using ListenPort   = Validated<uint16_t, PortNumber>;
+using DisplayName  = Validated<std::string_view, NonEmpty, SizeAtMost<32>, Printable>;
+using DeviceMac    = Validated<std::string_view, MacAddress>;
+using SessionId    = Validated<std::string_view, Uuid>;
+using Comment      = Validated<std::string, Utf8, SizeAtMost<140>>;
+using CountryCode  = Validated<std::string_view, SizeIs<2>, OnlyChars<"ABCDEFGHIJKLMNOPQRSTUVWXYZ">>;
+using Username     = Validated<std::string_view, SizeBetween<3, 16>,
+                                                 OnlyChars<"abcdefghijklmnopqrstuvwxyz0123456789_">>;
+using ReportName   = Validated<std::string_view, StartsWith<"report-">, Contains<"-q">, EndsWith<".pdf">>;
+using ApiHost      = Validated<std::string_view, Hostname>;
+using ServerAddress= Validated<std::string_view, IpAddress>;                     // IPv4 or IPv6
+using ContactEmail = Validated<std::string_view, EmailAddress>;
+using WebhookUrl   = Validated<std::string_view, Url, StartsWith<"https://">>;
 
-// Validated types compose into structs like any other member. A RadioConfig
-// can only be built from a valid ChannelID, Baud and Percent, so the whole
+// Validated types compose into structs like any other member. An Order can
+// only be built from a valid Quantity, ShippingDays and Percent, so the whole
 // struct carries the same guarantee. If you have one, every field passed.
-struct RadioConfig {
-    ChannelID channel;
-    Baud      baud;
-    Percent   volume;
+struct Order {
+    Quantity     quantity;
+    ShippingDays shipping;
+    Percent      discount;
 };
 
 // No hidden cost. The struct has the same layout as one with raw int fields.
-struct RadioConfigRaw { int16_t channel; int32_t baud; int volume; };
-static_assert(sizeof(RadioConfig) == sizeof(RadioConfigRaw));
-static_assert(alignof(RadioConfig) == alignof(RadioConfigRaw));
-static_assert(std::is_trivially_copyable_v<RadioConfig>);
+struct OrderRaw { int16_t quantity; int32_t shipping; int discount; };
+static_assert(sizeof(Order) == sizeof(OrderRaw));
+static_assert(alignof(Order) == alignof(OrderRaw));
+static_assert(std::is_trivially_copyable_v<Order>);
 
 // A rule can span several fields. Validated<T> works for any T, so wrap a
 // struct and write a rule that reads the whole thing. Here, each field is
-// valid on its own, but the pair must also fit inside the capture buffer.
-// Neither BlockOffset nor FFTSize can promise that alone.
-constexpr int64_t kCaptureBufferSamples = int64_t{1} << 20;
+// valid on its own, but the pair must also fit inside the largest file the
+// service stores. Neither FileOffset nor ChunkSize can promise that alone.
+constexpr int64_t kMaxFileBytes = int64_t{1} << 20;
 
-struct IQRange {
-    BlockOffset offset;
-    FFTSize     size;
+struct FileRange {
+    FileOffset offset;
+    ChunkSize  length;
 };
 
-struct WithinCaptureBuffer {
-    static constexpr bool passes(const IQRange& r) {
-        return r.offset + r.size <= kCaptureBufferSamples;  // cannot overflow: see kMaxBlockOffset
+struct WithinFile {
+    static constexpr bool passes(const FileRange& r) {
+        return r.offset + r.length <= kMaxFileBytes;  // cannot overflow: see kMaxFileOffset
     }
     static std::string requirement() {
-        return "offset + size <= " + std::to_string(kCaptureBufferSamples);
+        return "offset + length <= " + std::to_string(kMaxFileBytes);
     }
 };
 
-using IQBlock = Validated<IQRange, WithinCaptureBuffer>;
+using Slice = Validated<FileRange, WithinFile>;

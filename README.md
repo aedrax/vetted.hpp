@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="vetted.hpp: a single-header C++20 library for validated types. Check a value once, where it enters; the type carries the proof after that. A raw value that passes becomes a ChannelID and flows through three functions with no re-check; one that fails is rejected at the boundary.">
+  <img src="./assets/readme/hero.svg" width="100%" alt="vetted.hpp: a single-header C++20 library for validated types. Check a value once, where it enters; the type carries the proof after that. A raw value that passes becomes a Quantity and flows through three functions with no re-check; one that fails is rejected at the boundary.">
 </p>
 
 A `vetted::Validated<T, Rules...>` is a `T` that passes every rule. The only
@@ -9,46 +9,45 @@ untrusted data enters. The type carries the proof through every layer below.
 
 ## The problem it removes
 
-Say `handle_request()` calls `tune_radio()`, which calls `write_register()`,
-and all three take a radio channel number. If that number is a plain
-`int16_t`, none of them knows whether the caller checked it. So they all
-check:
+Say `handle_request()` calls `add_to_cart()`, which calls `reserve_stock()`,
+and all three take an item quantity. If that number is a plain `int16_t`,
+none of them knows whether the caller checked it. So they all check:
 
 ```cpp
-void write_register(int16_t channel) {
-    if (channel < 1 || channel > 4096) throw std::invalid_argument("bad channel");
+void reserve_stock(int16_t quantity) {
+    if (quantity < 1 || quantity > 1000) throw std::invalid_argument("bad quantity");
     ...
 }
-void tune_radio(int16_t channel) {
-    if (channel < 1 || channel > 4096) throw std::invalid_argument("bad channel");
-    write_register(channel);
+void add_to_cart(int16_t quantity) {
+    if (quantity < 1 || quantity > 1000) throw std::invalid_argument("bad quantity");
+    reserve_stock(quantity);
 }
-void handle_request(int16_t channel) {
-    if (channel < 1 || channel > 4096) throw std::invalid_argument("bad channel");
-    tune_radio(channel);
+void handle_request(int16_t quantity) {
+    if (quantity < 1 || quantity > 1000) throw std::invalid_argument("bad quantity");
+    add_to_cart(quantity);
 }
 ```
 
 That is three copies of one rule. A fourth layer means a fourth copy. Change
 the rule and you must find them all.
 
-Instead, make "a checked channel number" its own type:
+Instead, make "a checked quantity" its own type:
 
 ```cpp
-using ChannelID = vetted::Validated<int16_t, vetted::Positive, vetted::AtMost<4096>>;
+using Quantity = vetted::Validated<int16_t, vetted::Positive, vetted::AtMost<1000>>;
 
-void write_register(ChannelID channel) { ... }
-void tune_radio(ChannelID channel)     { write_register(channel); }
-void handle_request(ChannelID channel) { tune_radio(channel); }
+void reserve_stock(Quantity quantity)  { ... }
+void add_to_cart(Quantity quantity)    { reserve_stock(quantity); }
+void handle_request(Quantity quantity) { add_to_cart(quantity); }
 ```
 
 No checks anywhere. Validation is visible in one place: where untrusted data
-becomes a `ChannelID`.
+becomes a `Quantity`.
 
 ```cpp
-std::optional<ChannelID> parse_channel(std::string_view text) {
+std::optional<Quantity> parse_quantity(std::string_view text) {
     int16_t raw = /* parse the digits */;
-    return ChannelID::try_from(raw);   // nullopt if any rule fails
+    return Quantity::try_from(raw);   // nullopt if any rule fails
 }
 ```
 
@@ -56,9 +55,9 @@ When the value is a constant, the compiler runs the rules at build time and
 names the rule that failed:
 
 ```
-constexpr ChannelID oops{5000};
+constexpr Quantity oops{5000};
 // error: constexpr variable 'oops' must be initialized by a constant expression
-// note: non-constexpr function 'rule_violated<vetted::AtMost<4096>>' cannot be used in a constant expression
+// note: non-constexpr function 'rule_violated<vetted::AtMost<1000>>' cannot be used in a constant expression
 ```
 
 ## Is it safer? Is it faster?
@@ -92,7 +91,7 @@ The snippets below assume `using namespace vetted;`, as the example code does.
 ## How it works
 
 <p align="center">
-  <img src="./assets/readme/anatomy.svg" width="100%" alt="Anatomy of the declaration Validated of int16_t, Positive, AtMost 4096: int16_t is the value type and reads back as a plain int16_t; Positive and AtMost are rules that run in order, and each rule is a struct with a passes function and a requirement function.">
+  <img src="./assets/readme/anatomy.svg" width="100%" alt="Anatomy of the declaration Validated of int16_t, Positive, AtMost 1000: int16_t is the value type and reads back as a plain int16_t; Positive and AtMost are rules that run in order, and each rule is a struct with a passes function and a requirement function.">
 </p>
 
 A rule is a struct with two static functions. `passes` returns whether a
@@ -118,8 +117,8 @@ note: because 'Rule::requirement()' would be invalid: no member named 'requireme
 
 | | When | On failure |
 |---|---|---|
-| `ChannelID{v}` | The value must never be wrong: constants, config, computed values | Throws `std::invalid_argument`, for example `value 5000: expected <= 4096`. In a `constexpr` context, the build fails instead. |
-| `ChannelID::try_from(v)` | Untrusted input: user text, network, files | Returns `std::nullopt` |
+| `Quantity{v}` | The value must never be wrong: constants, config, computed values | Throws `std::invalid_argument`, for example `value 5000: expected <= 1000`. In a `constexpr` context, the build fails instead. |
+| `Quantity::try_from(v)` | Untrusted input: user text, network, files | Returns `std::nullopt` |
 
 ## The toolbox
 
@@ -129,19 +128,19 @@ note: because 'Rule::requirement()' would be invalid: no member named 'requireme
 |---|---|---|
 | `Positive` | `v > 0` | counts, sizes |
 | `NonNegative` | `v >= 0` | offsets, delays |
-| `NonZero` | `v != 0` | divisors, strides (negative allowed) |
-| `Even`, `Odd` | `v % 2 == 0`, `v % 2 != 0` | sample pairs, filter taps |
+| `NonZero` | `v != 0` | divisors, steps (negative allowed) |
+| `Even`, `Odd` | `v % 2 == 0`, `v % 2 != 0` | image sizes, vote panels |
 | `AtLeast<N>`, `AtMost<N>` | `v >= N`, `v <= N` | closed ranges |
 | `GreaterThan<N>`, `LessThan<N>` | `v > N`, `v < N` | open ranges, `[0, size)` |
-| `Between<Lo, Hi>` | both bounds inclusive | percentages, channels |
-| `In<a, b, c>` | `v` equals one of them | baud rates, enum-like ints |
-| `NotIn<a, b, c>` | `v` equals none of them | reserved pins |
-| `PowerOfTwo` | one bit set | FFT sizes, buffer sizes |
-| `MultipleOf<N>`, `Aligned<N>` | `v % N == 0` | DMA lengths, addresses |
-| `FitsInBits<N>` | `0 <= v < 2^N` | register fields |
+| `Between<Lo, Hi>` | both bounds inclusive | percentages, quantities |
+| `In<a, b, c>` | `v` equals one of them | shipping options, enum-like ints |
+| `NotIn<a, b, c>` | `v` equals none of them | skipped floors, reserved ports |
+| `PowerOfTwo` | one bit set | buffer sizes, hash tables |
+| `MultipleOf<N>`, `Aligned<N>` | `v % N == 0` | time slots, disk offsets |
+| `FitsInBits<N>` | `0 <= v < 2^N` | color channels, small fields |
 | `FitsIn<U>` | `v` is representable in integer type `U` | a safe narrowing cast, `FitsIn<int8_t>` |
-| `OnlyBits<Mask>` | no bits set outside `Mask` | flag words |
-| `HasBits<Mask>` | every bit in `Mask` set | a required enable bit |
+| `OnlyBits<Mask>` | no bits set outside `Mask` | permission bits |
+| `HasBits<Mask>` | every bit in `Mask` set | a required read bit |
 | `Finite` | not NaN, not infinity | any float from outside. Put it first. |
 | `NotNull` | `p != nullptr` | raw and copyable smart pointers. Put it first. |
 | `PortNumber` | `1 <= v <= 65535` | with `Hostname` or `IpAddress` |
@@ -157,7 +156,7 @@ vectors, arrays, spans.
 | `NonEmpty` | `size() != 0` |
 | `SizeIs<N>`, `SizeAtLeast<N>`, `SizeAtMost<N>` | `size()` compared with `N` |
 | `SizeBetween<Lo, Hi>` | both bounds inclusive |
-| `Each<R>` | every element passes `R`, for example `Each<Between<-2048, 2047>>` |
+| `Each<R>` | every element passes `R`, for example `Each<Between<0, 100>>` |
 | `Sorted` | ascending, equal neighbours allowed |
 | `Unique` | no two elements equal |
 
@@ -180,14 +179,14 @@ exactly what each rule accepts.
 | `Uuid` | `8-4-4-4-12` hex digits, any case |
 
 ```cpp
-using UpdateUrl = Validated<std::string_view, Url, StartsWith<"https://">>;
-constexpr UpdateUrl default_update{"https://example.org/fw"};   // the compiler checks the shape
+using WebhookUrl = Validated<std::string_view, Url, StartsWith<"https://">>;
+constexpr WebhookUrl default_hook{"https://example.org/hooks"};   // the compiler checks the shape
 ```
 
 `Satisfies` is the escape hatch. It makes a rule from a lambda:
 
 ```cpp
-using PllDivider = Validated<int,
+using PlayerCount = Validated<int,
     Satisfies<[](auto v) { return v == 1 || v % 2 == 0; }, "1 or an even number">>;
 ```
 
@@ -196,7 +195,7 @@ using PllDivider = Validated<int,
 List rules. They run in order and stop at the first failure:
 
 ```cpp
-using FFTSize = Validated<int32_t, PowerOfTwo, AtMost<65536>>;
+using ChunkSize = Validated<int32_t, PowerOfTwo, AtMost<65536>>;
 ```
 
 Rules can take template parameters, bundle into named combinations like
@@ -215,19 +214,19 @@ once at the boundary. See [docs/structs.md](docs/structs.md).
 A type can take more rules without a repeat of the rules it has:
 
 ```cpp
-using ChannelID  = Validated<int16_t, Positive, AtMost<4096>>;
-using VhfChannel = ChannelID::With<AtMost<100>>;
+using Quantity     = Validated<int16_t, Positive, AtMost<1000>>;
+using GiftQuantity = Quantity::With<AtMost<5>>;   // gift wrap for at most 5 items
 ```
 
-A `VhfChannel` is accepted wherever a `ChannelID` is, with no conversion
-written and no re-check, because its rules include every `ChannelID` rule.
+A `GiftQuantity` is accepted wherever a `Quantity` is, with no conversion
+written and no re-check, because its rules include every `Quantity` rule.
 The other direction is explicit, like construction from a raw value, and runs
-only the rule a `ChannelID` did not already prove:
+only the rule a `Quantity` did not already prove:
 
 ```cpp
-void tune_vhf(VhfChannel channel) { write_register(channel); }   // takes a ChannelID: fine
+void gift_wrap(GiftQuantity quantity) { reserve_stock(quantity); }   // takes a Quantity: fine
 
-if (auto vhf = VhfChannel::try_from(channel)) tune_vhf(*vhf);    // checks AtMost<100> only
+if (auto gift = GiftQuantity::try_from(quantity)) gift_wrap(*gift);  // checks AtMost<5> only
 ```
 
 Rules are matched by type, so `Between<0, 100>` and the pair `AtLeast<0>,
@@ -238,7 +237,7 @@ conversion.
 
 - The guarantee is only as good as the rules. Test them.
 - A rule promises exactly what it says and no more. If a function needs
-  `offset + size` to fit, the type must promise that, not only `>= 0`.
+  `offset + length` to fit, the type must promise that, not only `>= 0`.
 - Arithmetic on a validated value gives a plain `T`, so the proof does not
   survive math. Reading out is free. Only going in is guarded.
 - It says "this number is in range" and nothing else. It is not memory safety
@@ -246,7 +245,7 @@ conversion.
 
 ## The example
 
-`examples/` holds a small radio-control program that uses everything above:
+`examples/` holds a small online-shop program that uses everything above:
 the call chain before and after, the parsing boundary, structs of validated
 fields, and one line per rule in the toolbox.
 
@@ -263,7 +262,7 @@ cmake -S . -B build -DDEMO_COMPILE_ERROR=ON && cmake --build build
 | Path | What is in it |
 |---|---|
 | `include/vetted.hpp` | The whole library. Everything is in `namespace vetted`. |
-| `examples/domain.hpp` | The example's types: `ChannelID`, `FFTSize`, `Baud`, ... one line each, plus structs of them |
+| `examples/domain.hpp` | The example's types: `Quantity`, `ChunkSize`, `ShippingDays`, ... one line each, plus structs of them |
 | `examples/main.cc` | The call chain before and after, the parsing boundary, and the demo |
 | `docs/` | Rules in depth, validated types in structs, and the safety and performance notes |
 

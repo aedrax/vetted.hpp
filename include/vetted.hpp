@@ -5,7 +5,7 @@
 // Rule. The only way to make one is a constructor that runs the rules, so a
 // function that accepts one never re-checks.
 //
-//     using ChannelID = vetted::Validated<int16_t, vetted::Positive, vetted::AtMost<4096>>;
+//     using Quantity = vetted::Validated<int16_t, vetted::Positive, vetted::AtMost<1000>>;
 //
 // Contents
 //   1. Validated<T, Rules...>   the wrapper
@@ -56,17 +56,17 @@ namespace vetted {
 //
 // A type can take more rules without a repeat of the rules it has:
 //
-//     using LowChannel = ChannelID::With<AtMost<100>>;
+//     using GiftQuantity = Quantity::With<AtMost<5>>;
 //
 // Between two Validated types with the same T, the rule lists decide the
 // conversion. If every rule of the target is in the source, conversion is
-// implicit and free: a LowChannel is accepted wherever a ChannelID is. If
+// implicit and free: a GiftQuantity is accepted wherever a Quantity is. If
 // not, it is explicit (Validated{other} or try_from(other)) and runs only the
 // rules the source did not already prove.
 
 // What a Rule for values of type T must provide. The check is compile-time
 // only, so it costs nothing at runtime. A struct that fails it is rejected at
-// the `using ChannelID = Validated<...>` line, with a message that names the
+// the `using Quantity = Validated<...>` line, with a message that names the
 // missing function. Not deep inside Validated at the first call.
 template <typename Rule, typename T>
 concept RuleFor = requires(T v) {
@@ -77,14 +77,14 @@ concept RuleFor = requires(T v) {
 // Deliberately NOT constexpr. Calling it during constant evaluation is a
 // compile error, and clang/gcc print the template argument in the diagnostic,
 // so the build fails with a message like:
-//     "non-constexpr function 'rule_violated<AtMost<4096>>' cannot be used
+//     "non-constexpr function 'rule_violated<AtMost<1000>>' cannot be used
 //      in a constant expression"
 template <typename Rule>
 void rule_violated() {}
 
 // The error message prints the value when std::to_string can (numbers), and
 // quotes it when it is text (std::string, std::string_view). Otherwise it says
-// only "value" (structs, see IQBlock in examples/domain.hpp). A `const char*`
+// only "value" (structs, see Slice in examples/domain.hpp). A `const char*`
 // is not quoted, because it may be null.
 template <typename T>
 std::string describe_value(const T& v) {
@@ -147,8 +147,8 @@ public:
         return std::nullopt;
     }
 
-    // This type with more rules. ChannelID::With<AtMost<100>> is
-    // Validated<int16_t, Positive, AtMost<4096>, AtMost<100>>.
+    // This type with more rules. Quantity::With<AtMost<5>> is
+    // Validated<int16_t, Positive, AtMost<1000>, AtMost<5>>.
     template <RuleFor<T>... More>
     using With = Validated<T, Rules..., More...>;
 
@@ -202,7 +202,7 @@ public:
 // ============================================================================
 //
 // A rule is any struct with `passes` and `requirement`.
-// `requirement` returns the bare condition ("a power of two", "<= 4096").
+// `requirement` returns the bare condition ("a power of two", "<= 1000").
 // Validated adds "expected" when it builds the error message, so combinators
 // can nest without repeated wording.
 //
@@ -335,7 +335,7 @@ struct FitsIn {
     }
 };
 
-// Passes if the value sets no bits outside Mask. For flag words and register writes.
+// Passes if the value sets no bits outside Mask. For flag words and permission bits.
 template <auto Mask>
 struct OnlyBits {
     static constexpr bool passes(auto v) { return (v & ~Mask) == 0; }
@@ -404,7 +404,7 @@ struct Not {
 };
 
 // Keeps the check of Rule and replaces its message. A nested combinator can
-// produce "a power of two and <= 64, or one of {1000}". Wrap it in Named to
+// produce "a multiple of 5 and <= 50, or one of {100}". Wrap it in Named to
 // say what it means.
 template <typename Rule, fixed_string Description>
 struct Named {
@@ -456,7 +456,7 @@ template <std::size_t Lo, std::size_t Hi>
 using SizeBetween = AllOf<SizeAtLeast<Lo>, SizeAtMost<Hi>>;
 
 // Passes if every element passes Rule. The template parameter is a rule type,
-// so the whole toolbox applies to elements. Example: Each<Between<-2048, 2047>>.
+// so the whole toolbox applies to elements. Example: Each<Between<0, 100>>.
 template <typename Rule>
 struct Each {
     static constexpr bool passes(const auto& c) {
@@ -484,7 +484,7 @@ struct Sorted {
 };
 
 // No two elements equal. Compares every pair, so it is O(n^2). That is fine
-// for the lookup tables and channel lists it is meant for.
+// for the lookup tables and short lists it is meant for.
 struct Unique {
     static constexpr bool passes(const auto& c) {
         for (auto i = std::begin(c); i != std::end(c); ++i) {

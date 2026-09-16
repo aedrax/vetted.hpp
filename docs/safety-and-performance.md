@@ -1,9 +1,9 @@
 # Is it safer? Is it faster?
 
-Safer, yes. You cannot pass a raw `int16_t` where a `ChannelID` is expected,
+Safer, yes. You cannot pass a raw `int16_t` where a `Quantity` is expected,
 so a missing check is a compile error, not a bug that ships. The rule lives
-on one line, so a change from 4096 to 8192 updates every layer at once. A
-function that takes a `ChannelID` states its assumptions in its signature,
+on one line, so a change from 1000 to 2000 updates every layer at once. A
+function that takes a `Quantity` states its assumptions in its signature,
 which makes it easier to review. The only way in is the `explicit`
 constructor, so every place a raw value becomes a trusted one is greppable.
 
@@ -16,9 +16,9 @@ compiled both ways at `-O2` on arm64:
 | Cold path | An exception-throwing block in every function | None |
 | Argument passing | `int16_t` in a register | `int16_t` in a register |
 
-The wrapper is free. `ChannelID` is the same size as `int16_t`, trivially
+The wrapper is free. `Quantity` is the same size as `int16_t`, trivially
 copyable and trivially destructible, so it passes in registers exactly like
-the raw integer. A `constexpr ChannelID` is checked at build time and emits no
+the raw integer. A `constexpr Quantity` is checked at build time and emits no
 code. The `requirement()` strings run only when a check fails. The success
 path never touches them.
 
@@ -30,17 +30,17 @@ effect.
 
 ## A rule promises exactly what it says
 
-An early version of the example had `BlockOffset = Validated<int64_t, AtLeast<0>>`
-and then computed `offset + size`. `INT64_MAX` is a valid `BlockOffset` under
+An early version of the example had `FileOffset = Validated<int64_t, AtLeast<0>>`
+and then computed `offset + length`. `INT64_MAX` is a valid `FileOffset` under
 that rule, and the addition overflowed. The type never claimed the sum would
 fit. The function assumed it.
 
 The fix is one of two things. Make the type promise what the function needs
-(`BlockOffset` is now bounded by `INT64_MAX - kMaxFFTSize`). Or validate the
-pair together (`IQBlock`, see [structs.md](structs.md)).
+(`FileOffset` is now bounded by `INT64_MAX - kMaxChunkSize`). Or validate the
+pair together (`Slice`, see [structs.md](structs.md)).
 
 Arithmetic on a validated value gives a plain `T`. That is correct, because
-`offset + size` is not a `BlockOffset`. But it means the proof does not
+`offset + length` is not a `FileOffset`. But it means the proof does not
 survive math. Reading out is free. Only going in is guarded.
 
 ## What keeps the guarantee intact
