@@ -2,18 +2,17 @@
   <img src="./assets/readme/hero.svg" width="100%" alt="vetted.hpp: a single-header C++20 library for validated types. Check a value once, where it enters; the type carries the proof after that. A raw value that passes becomes a ChannelID and flows through three functions with no re-check; one that fails is rejected at the boundary.">
 </p>
 
-A `vetted::Validated<T, Rules...>` is a `T` that is known to satisfy every rule.
-The only way to make one is through a constructor that runs the rules, so any
-function that receives one can use the value without checking it. Validation
-happens in one place, where untrusted data enters, and the type carries the
-proof through every layer below.
+A `vetted::Validated<T, Rules...>` is a `T` that passes every rule. The only
+way to make one is a constructor that runs the rules, so a function that
+receives one can use the value without a check. You validate once, where
+untrusted data enters. The type carries the proof through every layer below.
 
 ## The problem it removes
 
 Say `handle_request()` calls `tune_radio()`, which calls `write_register()`,
 and all three take a radio channel number. If that number is a plain
-`int16_t`, none of them knows whether the caller already checked it. So they
-all check:
+`int16_t`, none of them knows whether the caller checked it. So they all
+check:
 
 ```cpp
 void write_register(int16_t channel) {
@@ -30,10 +29,10 @@ void handle_request(int16_t channel) {
 }
 ```
 
-That is three copies of the same rule, and a fourth layer would mean a fourth
-copy. Change the rule and you have to go find them all.
+That is three copies of one rule. A fourth layer means a fourth copy. Change
+the rule and you must find them all.
 
-Make "a channel number that has been checked" its own type instead:
+Instead, make "a checked channel number" its own type:
 
 ```cpp
 using ChannelID = vetted::Validated<int16_t, vetted::Positive, vetted::AtMost<4096>>;
@@ -43,8 +42,8 @@ void tune_radio(ChannelID channel)     { write_register(channel); }
 void handle_request(ChannelID channel) { tune_radio(channel); }
 ```
 
-No checks anywhere. The one place validation is visible is wherever untrusted
-data first turns into a `ChannelID`:
+No checks anywhere. Validation is visible in one place: where untrusted data
+becomes a `ChannelID`.
 
 ```cpp
 std::optional<ChannelID> parse_channel(std::string_view text) {
@@ -53,8 +52,8 @@ std::optional<ChannelID> parse_channel(std::string_view text) {
 }
 ```
 
-When the value is a constant, the compiler runs the rules during the build
-and names the one that broke:
+When the value is a constant, the compiler runs the rules at build time and
+names the rule that failed:
 
 ```
 constexpr ChannelID oops{5000};
@@ -64,12 +63,13 @@ constexpr ChannelID oops{5000};
 
 ## Is it safer? Is it faster?
 
-Safer, yes: a missing check becomes a compile error, the rule lives in one
-line, and every place a raw value becomes a trusted one is greppable. Faster,
-a little: the wrapper is the same size as the raw type and passes in
-registers, and a validated call chain drops the range check from every layer.
-The measurements and the caveats are in
-[docs/safety-and-performance.md](docs/safety-and-performance.md).
+Safer, yes. A missing check is a compile error. The rule lives on one line.
+Every place a raw value becomes a trusted one is greppable.
+
+Faster, a little. The wrapper is the same size as the raw type and passes in
+registers. A validated call chain drops the range check from every layer.
+See [docs/safety-and-performance.md](docs/safety-and-performance.md) for the
+measurements and the caveats.
 
 ## Using it
 
@@ -84,8 +84,8 @@ target_link_libraries(app PRIVATE vetted::vetted)
 ```
 
 Or install it (`cmake --install build --prefix /some/where`) and use
-`find_package(vetted REQUIRED)`. Either way the target is `vetted::vetted` and
-it sets C++20 for you.
+`find_package(vetted REQUIRED)`. Either way the target is `vetted::vetted`,
+and it sets C++20 for you.
 
 The snippets below assume `using namespace vetted;`, as the example code does.
 
@@ -95,8 +95,8 @@ The snippets below assume `using namespace vetted;`, as the example code does.
   <img src="./assets/readme/anatomy.svg" width="100%" alt="Anatomy of the declaration Validated of int16_t, Positive, AtMost 4096: int16_t is the value type and reads back as a plain int16_t; Positive and AtMost are rules that run in order, and each rule is a struct with a passes function and a requirement function.">
 </p>
 
-A rule is a struct with two static functions. `passes` says whether a value
-passes, and `requirement` states the condition for the error message:
+A rule is a struct with two static functions. `passes` returns whether a
+value passes. `requirement` returns the condition for the error message:
 
 ```cpp
 struct PowerOfTwo {
@@ -105,9 +105,9 @@ struct PowerOfTwo {
 };
 ```
 
-`Validated` checks that every rule really has both functions, using a C++20
-concept. It's a compile-time contract with no runtime cost. Forget `requirement()`
-and the build stops at the `using` line:
+`Validated` uses a C++20 concept to check that every rule has both functions.
+This costs nothing at runtime. If you forget `requirement()`, the build stops
+at the `using` line:
 
 ```
 error: constraints not satisfied for class template 'Validated' [with T = int, Rules = <Even>]
@@ -118,12 +118,12 @@ note: because 'Rule::requirement()' would be invalid: no member named 'requireme
 
 | | When | On failure |
 |---|---|---|
-| `ChannelID{v}` | The value should never be wrong: constants, config, computed values | Throws `std::invalid_argument`, e.g. `value 5000: expected <= 4096`. In a `constexpr` context, the build fails instead. |
+| `ChannelID{v}` | The value must never be wrong: constants, config, computed values | Throws `std::invalid_argument`, for example `value 5000: expected <= 4096`. In a `constexpr` context, the build fails instead. |
 | `ChannelID::try_from(v)` | Untrusted input: user text, network, files | Returns `std::nullopt` |
 
 ## The toolbox
 
-`vetted.hpp` ships with these. Most are three lines, so add your own freely.
+`vetted.hpp` ships with these rules. Most are three lines, so add your own.
 
 | Rule | Passes when | Typical use |
 |---|---|---|
@@ -145,25 +145,26 @@ note: because 'Rule::requirement()' would be invalid: no member named 'requireme
 | `Finite` | not NaN, not infinity | any float from outside. Put it first. |
 | `NotNull` | `p != nullptr` | raw and copyable smart pointers. Put it first. |
 | `PortNumber` | `1 <= v <= 65535` | with `Hostname` or `IpAddress` |
-| `AllOf<R...>`, `AnyOf<R...>`, `Not<R>` | combine other rules | anything the above can't say alone |
+| `AllOf<R...>`, `AnyOf<R...>`, `Not<R>` | combine other rules | anything the rules above cannot say alone |
 | `Named<R, "text">` | `R` passes; the message says `"text"` | a readable message for a nested combinator |
-| `Satisfies<lambda, "text">` | the lambda returns true | one-offs that don't deserve a struct |
+| `Satisfies<lambda, "text">` | the lambda returns true | one-off rules that do not deserve a struct |
 
-For containers, any `T` with a `size()` you can iterate: strings, vectors, arrays, spans.
+For containers, any `T` with a `size()` that you can iterate: strings,
+vectors, arrays, spans.
 
 | Rule | Passes when |
 |---|---|
 | `NonEmpty` | `size() != 0` |
 | `SizeIs<N>`, `SizeAtLeast<N>`, `SizeAtMost<N>` | `size()` compared with `N` |
 | `SizeBetween<Lo, Hi>` | both bounds inclusive |
-| `Each<R>` | every element passes `R`, so `Each<Between<-2048, 2047>>` |
+| `Each<R>` | every element passes `R`, for example `Each<Between<-2048, 2047>>` |
 | `Sorted` | ascending, equal neighbours allowed |
 | `Unique` | no two elements equal |
 
 For text, any `T` that converts to `std::string_view`. The named shapes check
 the form of the text, at compile time when it is a constant. They do not
-resolve names or cover every corner of the RFCs. Each rule states in the header
-exactly what it accepts.
+resolve names and do not cover every corner of the RFCs. The header states
+exactly what each rule accepts.
 
 | Rule | Passes when |
 |---|---|
@@ -183,7 +184,7 @@ using UpdateUrl = Validated<std::string_view, Url, StartsWith<"https://">>;
 constexpr UpdateUrl default_update{"https://example.org/fw"};   // the compiler checks the shape
 ```
 
-The last one is the escape hatch, and it brings back the lambda style:
+`Satisfies` is the escape hatch. It makes a rule from a lambda:
 
 ```cpp
 using PllDivider = Validated<int,
@@ -192,7 +193,7 @@ using PllDivider = Validated<int,
 
 ### Chaining rules
 
-List them, and they run in order:
+List rules. They run in order and stop at the first failure:
 
 ```cpp
 using FFTSize = Validated<int32_t, PowerOfTwo, AtMost<65536>>;
@@ -204,14 +205,14 @@ Rules can take template parameters, bundle into named combinations like
 
 ## Validated types in structs
 
-They compose like any other member. A struct of validated fields carries the
-same guarantee as its parts, its layout is identical to the raw version, and a
-rule can span several fields at once. Wire formats stay raw and convert once
-at the boundary. See [docs/structs.md](docs/structs.md).
+Validated types compose like any other member. A struct of validated fields
+carries the same guarantee as its parts. Its layout is identical to the raw
+version. A rule can span several fields. Keep wire formats raw and convert
+once at the boundary. See [docs/structs.md](docs/structs.md).
 
 ## Refining a type
 
-A type can take more rules without repeating the ones it has:
+A type can take more rules without a repeat of the rules it has:
 
 ```cpp
 using ChannelID  = Validated<int16_t, Positive, AtMost<4096>>;
@@ -219,9 +220,9 @@ using VhfChannel = ChannelID::With<AtMost<100>>;
 ```
 
 A `VhfChannel` is accepted wherever a `ChannelID` is, with no conversion
-written and nothing re-checked, because its rules include every `ChannelID`
-rule. Going the other way is explicit, like going in from a raw value, and
-runs only the rule a `ChannelID` did not already prove:
+written and no re-check, because its rules include every `ChannelID` rule.
+The other direction is explicit, like construction from a raw value, and runs
+only the rule a `ChannelID` did not already prove:
 
 ```cpp
 void tune_vhf(VhfChannel channel) { write_register(channel); }   // takes a ChannelID: fine
@@ -230,23 +231,24 @@ if (auto vhf = VhfChannel::try_from(channel)) tune_vhf(*vhf);    // checks AtMos
 ```
 
 Rules are matched by type, so `Between<0, 100>` and the pair `AtLeast<0>,
-AtMost<100>` count as different rules. Order in the list does not matter.
+AtMost<100>` are different rules. The order of rules does not affect
+conversion.
 
 ## Limits
 
-- The guarantee is only as good as the rules, so test them.
+- The guarantee is only as good as the rules. Test them.
 - A rule promises exactly what it says and no more. If a function needs
-  `offset + size` to fit, the type has to promise that, not just `>= 0`.
-- Arithmetic on a validated value produces a plain `T`, so the proof doesn't
-  propagate through math. Reading out is free; only going in is guarded.
+  `offset + size` to fit, the type must promise that, not only `>= 0`.
+- Arithmetic on a validated value gives a plain `T`, so the proof does not
+  survive math. Reading out is free. Only going in is guarded.
 - It says "this number is in range" and nothing else. It is not memory safety
   or thread safety.
 
 ## The example
 
-`examples/` holds a small radio-control program that exercises everything
-above: the before-and-after call chain, the parsing boundary, structs of
-validated fields, and one line per rule in the toolbox.
+`examples/` holds a small radio-control program that uses everything above:
+the call chain before and after, the parsing boundary, structs of validated
+fields, and one line per rule in the toolbox.
 
 ```sh
 cmake -S . -B build && cmake --build build && ./build/vetted_example
@@ -258,7 +260,7 @@ To watch the compiler reject a bad constant:
 cmake -S . -B build -DDEMO_COMPILE_ERROR=ON && cmake --build build
 ```
 
-| Path | What's in it |
+| Path | What is in it |
 |---|---|
 | `include/vetted.hpp` | The whole library. Everything is in `namespace vetted`. |
 | `examples/domain.hpp` | The example's types: `ChannelID`, `FFTSize`, `Baud`, ... one line each, plus structs of them |

@@ -10,29 +10,29 @@
 #include "domain.hpp"
 
 // ============================================================================
-// The call chain validating inputs
+// The call chain
 // ============================================================================
 
 namespace the_old_way {
-// In this example, data passes through three layers of functions resulting in three 
-// copies of the same check. None of them can trust the caller, so every one of them
-// is defensive. Kept here only for contrast.
+// Data passes through three layers of functions, and each layer repeats the
+// same check. No layer can trust its caller, so every layer is defensive.
+// Kept here only for contrast.
 
-// Actually needs the value in range, so it checks. Fair enough.
+// This one uses the value, so it checks. Fair enough.
 void write_register(int16_t channel) {
     if (channel < 1 || channel > 4096) throw std::invalid_argument("bad channel");
     // ... stuff ...
     std::cout << "  register <- " << channel << "\n";
 }
 
-// Only forwards, but can't trust its caller, so it checks again.
+// Only forwards, but cannot trust its caller, so it checks again.
 void tune_radio(int16_t channel) {
     if (channel < 1 || channel > 4096) throw std::invalid_argument("bad channel");
     // ... stuff ...
     write_register(channel);
 }
 
-// Top of the chain where you're validating input for the first time
+// Top of the chain. The first place that validates the input.
 void handle_request(int16_t channel) {
     if (channel < 1 || channel > 4096) throw std::invalid_argument("bad channel");
     // ... stuff ...
@@ -40,9 +40,9 @@ void handle_request(int16_t channel) {
 }
 }  // namespace the_old_way
 
-// The same three layers with ChannelID which is a `Validated` type. Don't need to check,
-// because a ChannelID cannot exist unless the checks already passed. Each function just
-// forwards the value and gets on with its job.
+// The same three layers with ChannelID, a Validated type. No layer checks,
+// because a ChannelID cannot exist unless the checks already passed. Each
+// function forwards the value and does its job.
 
 void write_register(ChannelID channel) {
     // ... stuff ...
@@ -61,22 +61,22 @@ void handle_request(ChannelID channel) {
     tune_radio(channel);
 }
 
-// A refined type. Only the VHF front end needs the extra rule; everything a
-// VhfChannel is passed to still takes a plain ChannelID.
+// A refined type. Only the VHF front end needs the extra rule. Everything
+// below it still takes a plain ChannelID.
 void tune_vhf(VhfChannel channel) {
     std::cout << "  VHF front end on channel " << channel << "\n";
     write_register(channel);  // VhfChannel -> ChannelID: implicit, nothing to check
 }
 
-// A few more functions that take validated types and can do math freely.
+// More functions that take validated types and do math on them.
 
-// Arithmetic on validated values, BlockOffset is bounded so the sum can't overflow.
+// Arithmetic on validated values. BlockOffset is bounded, so the sum cannot overflow.
 void process_iq_block(BlockOffset offset, FFTSize size) {
-    int64_t end = offset + size;  // cannot overflow: BlockOffset is bounded for exactly this
+    int64_t end = offset + size;  // cannot overflow: BlockOffset is bounded for this
     std::cout << "  processing block [" << offset << ", " << end << ")\n";
 }
 
-// A validated struct, one rule spans both fields, so the block is known to fit.
+// A validated struct. One rule spans both fields, so the block is known to fit.
 void process_iq_block(const IQBlock& block) {
     int64_t end = block->offset + block->size;
     std::cout << "  processing block [" << block->offset << ", " << end << ") in buffer\n";
@@ -102,7 +102,7 @@ void start_dma(BurstLength burst) {
     std::cout << "  DMA burst of " << burst << "\n";
 }
 
-// A struct of validated fields, holding one means every field passed, so no checks.
+// A struct of validated fields. If you have one, every field passed, so there are no checks.
 void apply_config(const RadioConfig& cfg) {
     handle_request(cfg.channel);
     configure_serial(cfg.baud);
@@ -110,11 +110,11 @@ void apply_config(const RadioConfig& cfg) {
 }
 
 // ============================================================================
-// Boundary where inputs are checked and validation is visible
+// The boundary: the one place where validation is visible
 // ============================================================================
 
-// Untrusted text comes in, a ChannelID (or nothing) goes out. Everything
-// downstream of this function gets a value it can trust.
+// Untrusted text comes in. A ChannelID, or nothing, goes out. Everything
+// below this function gets a value it can trust.
 
 std::optional<ChannelID> parse_channel(std::string_view text) {
     int16_t raw{};
@@ -126,8 +126,8 @@ std::optional<ChannelID> parse_channel(std::string_view text) {
 }
 
 // The same idea for a struct. A packed wire format holds raw integers, because
-// bytes off a socket or out of flash can't carry a proof. The one conversion
-// function turns it into a RadioConfig, or nothing. Downstream code never sees
+// bytes off a socket or out of flash cannot carry a proof. One conversion
+// function turns it into a RadioConfig, or nothing. Code below it never sees
 // the raw version.
 struct __attribute__((packed)) RadioConfigWire {
     int16_t channel;
@@ -150,7 +150,7 @@ std::optional<RadioConfig> parse_config(const RadioConfigWire& wire) {
 
 int main() {
     std::cout << "== Compile time: the compiler proves the constant is valid ==\n";
-    std::cout << "== a ChannelID is `Validated` to be positive and at most 4096 ==\n";
+    std::cout << "== a ChannelID is positive and at most 4096 ==\n";
     constexpr ChannelID default_channel{14};  // checked during the build
     static_assert(default_channel == 14);
     handle_request(default_channel);
@@ -162,7 +162,7 @@ int main() {
 #endif
 
     std::cout << "\n== Runtime: untrusted input is checked once, at the boundary ==\n";
-    std::cout << "== the inputs being initially validated for ChannelID types or not ==\n";
+    std::cout << "== each input becomes a ChannelID, or is rejected ==\n";
     for (std::string_view input : {"2048", "5000", "0", "abc"}) {
         std::cout << "input \"" << input << "\":\n";
         if (auto channel = parse_channel(input)) {
@@ -173,7 +173,7 @@ int main() {
     }
 
     std::cout << "\n== The throwing constructor, for values that must never be wrong ==\n";
-    std::cout << "== These could have been compile-time checked, but for the purpose of the demo they aren't ==\n";
+    std::cout << "== these could be constexpr, but the demo needs them to throw ==\n";
     try {
         FFTSize fft{1000};
         process_iq_block(BlockOffset{0}, fft);
@@ -212,7 +212,7 @@ int main() {
     }
 
     std::cout << "\n== Validated types inside structs ==\n";
-    // Built from constants, every field is checked during the build
+    // Built from constants. Every field is checked during the build.
     constexpr RadioConfig defaults{ChannelID{14}, Baud{115200}, Percent{50}};
     std::cout << "compile-time defaults:\n";
     apply_config(defaults);
@@ -229,7 +229,7 @@ int main() {
         }
     }
 
-    // A rule that spans fields, each part is valid, the pair may still not be.
+    // A rule that spans fields. Each part is valid. The pair may still fail.
     std::cout << "rules across fields:\n";
     constexpr IQBlock first_block{IQRange{BlockOffset{0}, FFTSize{4096}}};
     process_iq_block(first_block);
@@ -261,10 +261,10 @@ int main() {
     start_dma(BurstLength{1000});
 
     std::cout << "\n== The rest of the toolbox ==\n";
-    // Each line: a value that passes, then one that fails, for one rule.
+    // Two lines per rule: a value that passes, then one that fails.
     auto show = [](std::string_view name, auto make) {
         try {
-            auto value = make();  // may throw, nothing printed until it succeeds
+            auto value = make();  // may throw. Nothing prints until it succeeds.
             std::cout << "  " << name << ": ok";
             if constexpr (requires { std::cout << value; }) std::cout << " " << value;
             std::cout << "\n";
@@ -300,7 +300,7 @@ int main() {
     show("DeviceName{nullptr}", [] { return DeviceName{nullptr}; });
 
     std::cout << "\n== Sizes and text ==\n";
-    // The same rules, at compile time. The compiler parses the address.
+    // The same rules at compile time. The compiler parses the address.
     constexpr StreamTarget loopback{"::1"};
     constexpr UpdateUrl default_update{"https://example.org/fw/sdr-fw-v2.bin"};
     std::cout << "  compile-time: " << loopback << ", " << default_update << "\n";

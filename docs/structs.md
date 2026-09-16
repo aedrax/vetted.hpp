@@ -2,8 +2,8 @@
 
 The snippets below assume `using namespace vetted;`, as the example code does.
 
-They compose like any other member. A struct of validated fields carries the
-same guarantee as its parts: if you have one, every field passed.
+Validated types compose like any other member. A struct of validated fields
+carries the same guarantee as its parts. If you have one, every field passed.
 
 ```cpp
 struct RadioConfig {
@@ -14,18 +14,18 @@ struct RadioConfig {
 
 constexpr RadioConfig defaults{ChannelID{14}, Baud{115200}, Percent{50}};  // checked at build time
 
-void apply_config(const RadioConfig& cfg) {   // no checks, however deep it goes
+void apply_config(const RadioConfig& cfg) {   // no checks, at any depth
     handle_request(cfg.channel);
     configure_serial(cfg.baud);
     set_volume(cfg.volume);
 }
 ```
 
-Layout is identical to the same struct with raw ints: same size, same
+The layout is identical to the same struct with raw ints: same size, same
 alignment, trivially copyable. `examples/domain.hpp` asserts this.
 
-Bytes off a socket or out of flash can't carry a proof, so a packed wire
-struct should stay raw. Convert it once, in one function:
+Bytes off a socket or out of flash cannot carry a proof, so keep a packed
+wire struct raw. Convert it once, in one function:
 
 ```cpp
 struct __attribute__((packed)) RadioConfigWire { int16_t channel; int32_t baud; int8_t volume; };
@@ -40,9 +40,9 @@ std::optional<RadioConfig> parse_config(const RadioConfigWire& wire) {
 ```
 
 A rule can also span several fields. `Validated<T>` works for any `T`, so
-wrap a struct and write a rule that looks at the whole thing. In this example
+wrap a struct and write a rule that reads the whole thing. In this example,
 each field is valid on its own, but the pair must also fit inside the capture
-buffer, which neither field can promise alone:
+buffer. Neither field can promise that alone:
 
 ```cpp
 struct IQRange { BlockOffset offset; FFTSize size; };
@@ -59,7 +59,7 @@ void process_iq_block(const IQBlock& block) {
 }
 ```
 
-A `Validated` field inside a packed struct also packs correctly on Clang.
-GCC may refuse to under-align it, because the type has a user-provided
-constructor and so isn't a POD, and it will warn "ignoring packed attribute
-because of unpacked non-POD field". Keeping wire structs raw sidesteps that.
+A `Validated` field inside a packed struct packs correctly on Clang. GCC may
+refuse to under-align it, because the type has a user-provided constructor
+and is not a POD. GCC then warns "ignoring packed attribute because of
+unpacked non-POD field". A raw wire struct avoids this.

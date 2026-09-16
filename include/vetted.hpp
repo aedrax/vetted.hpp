@@ -1,9 +1,9 @@
 // vetted.hpp - validated types for C++20, in a single header.
 //
-// Check a value once, where it enters the program, and let the type carry the
-// proof everywhere else. A vetted::Validated<T, Rules...> is a T that is known
-// to satisfy every Rule; the only way to make one is through a constructor
-// that runs the rules, so functions that accept one never re-check.
+// Check a value once, where it enters the program. The type carries the proof
+// everywhere else. A vetted::Validated<T, Rules...> is a T that passes every
+// Rule. The only way to make one is a constructor that runs the rules, so a
+// function that accepts one never re-checks.
 //
 //     using ChannelID = vetted::Validated<int16_t, vetted::Positive, vetted::AtMost<4096>>;
 //
@@ -37,39 +37,37 @@ namespace vetted {
 // Validated<T, Rules...>
 // ============================================================================
 //
-// A Validated<T, Rules...> is a T that is known to satisfy every Rule.
-// The only way to obtain one is through a constructor that runs the rules,
-// so if a function receives one, the checks already happened. Functions that
-// accept a Validated never need to re-check their input.
+// A Validated<T, Rules...> is a T that passes every Rule. The only way to
+// make one is a constructor that runs the rules. A function that receives
+// one never re-checks its input.
 //
 // A Rule is any struct with two static functions (see the toolbox below):
 //
 //     static constexpr bool passes(T value);   // does the value pass?
 //     static std::string   requirement();      // the condition
 //
-// Two ways to get one:
+// Two ways to make one:
 //   - Validated{v}           throws std::invalid_argument on failure. Use it
-//                            for values that should never be wrong (constants,
+//                            for values that must never be wrong (constants,
 //                            config). In a constexpr context it fails the
 //                            *build* instead.
 //   - Validated::try_from(v) returns std::nullopt on failure. Use it at the
 //                            boundary, for untrusted input.
 //
-// A type can be refined with more rules, without repeating the ones it has:
+// A type can take more rules without a repeat of the rules it has:
 //
 //     using LowChannel = ChannelID::With<AtMost<100>>;
 //
-// Between two Validated types of the same T, conversion is decided by the
-// rule lists. If every rule of the target is in the source, conversion is
+// Between two Validated types with the same T, the rule lists decide the
+// conversion. If every rule of the target is in the source, conversion is
 // implicit and free: a LowChannel is accepted wherever a ChannelID is. If
 // not, it is explicit (Validated{other} or try_from(other)) and runs only the
 // rules the source did not already prove.
 
-// What it takes to be a Rule for values of type T. This is a compile-time
-// contract only so it costs nothing at runtime, and a struct that doesn't meet
-// it is rejected at the `using ChannelID = Validated<...>` line with a message
-// that says which requirement is missing, instead of somewhere deep inside
-// Validated when the rule is first called.
+// What a Rule for values of type T must provide. The check is compile-time
+// only, so it costs nothing at runtime. A struct that fails it is rejected at
+// the `using ChannelID = Validated<...>` line, with a message that names the
+// missing function. Not deep inside Validated at the first call.
 template <typename Rule, typename T>
 concept RuleFor = requires(T v) {
     { Rule::passes(v) } -> std::convertible_to<bool>;
@@ -84,10 +82,10 @@ concept RuleFor = requires(T v) {
 template <typename Rule>
 void rule_violated() {}
 
-// Error messages print the value when std::to_string can (numbers), quote it
-// when it is text (std::string, std::string_view), and just say "value"
-// otherwise (structs, see IQBlock in examples/domain.hpp). A `const char*` is
-// not quoted, because it may be null.
+// The error message prints the value when std::to_string can (numbers), and
+// quotes it when it is text (std::string, std::string_view). Otherwise it says
+// only "value" (structs, see IQBlock in examples/domain.hpp). A `const char*`
+// is not quoted, because it may be null.
 template <typename T>
 std::string describe_value(const T& v) {
     if constexpr (requires { std::to_string(v); }) {
@@ -137,11 +135,11 @@ class Validated {
     constexpr Validated(T v, already_checked) : value_(v) {}
 
 public:
-    // Throwing constructor. `explicit` so a raw T never silently becomes Validated
-    // every conversion is a visible decision to run the checks.
+    // Throwing constructor. `explicit`, so a raw T never becomes a Validated by
+    // accident. Every conversion is a visible decision to run the checks.
     constexpr explicit Validated(T v) : value_(checked(v)) {}
 
-    // Non-throwing constructor for input you don't trust.
+    // Non-throwing constructor, for input you do not trust.
     static constexpr std::optional<Validated> try_from(T v) {
         if ((Rules::passes(v) && ...)) {
             return Validated{v, already_checked{}};
@@ -179,17 +177,17 @@ public:
 
     constexpr const T& get() const { return value_; }
 
-    // Reads back as a plain T, so arithmetic and printing just work.
-    // Going out of the type is free, only going in is guarded.
+    // Reads back as a plain T, so arithmetic and printing work as usual.
+    // Reading out is free. Only going in is guarded.
     constexpr operator T() const { return value_; }
 
     // For a T that is a struct, block->offset instead of block.get().offset.
     constexpr const T* operator->() const { return &value_; }
 
-    // Prints as a plain T. The conversion above is not enough here, because the
-    // stream operator for std::string_view (and many other types) is a template
+    // Prints as a plain T. The conversion above is not enough, because the
+    // stream operator for std::string_view (and many other types) is a template,
     // and templates do not see through user conversions. Only <iosfwd> is
-    // needed: the body is resolved where it is called, and the caller has the
+    // needed. The body is resolved at the call site, and the caller has the
     // stream header.
     template <typename C, typename Tr>
     friend std::basic_ostream<C, Tr>& operator<<(std::basic_ostream<C, Tr>& os, const Validated& v)
@@ -203,23 +201,23 @@ public:
 // The toolbox
 // ============================================================================
 //
-// A rule is any struct with `passes` and `requirement`. 
-// `requirement` returns the bare condition ("a power of two", "<= 4096")
-// Validated prefixes it with "expected" when it builds the error message,
-// so combinators can nest without the wording piling up.
+// A rule is any struct with `passes` and `requirement`.
+// `requirement` returns the bare condition ("a power of two", "<= 4096").
+// Validated adds "expected" when it builds the error message, so combinators
+// can nest without repeated wording.
 //
-// There are four kinds here:
+// There are four kinds:
 //   - rules about the value       (Positive, AtMost<N>, In<a, b, c>, ...)
 //     their template parameters, if any, are VALUES
 //   - rules built from other rules (AllOf<...>, AnyOf<...>, Not<...>, Named<...>)
 //     their template parameters are RULE TYPES
 //   - rules about containers      (NonEmpty, SizeAtMost<N>, Each<R>, Sorted, ...)
-//     for any T you can iterate and take the size of: strings, vectors, arrays, spans
+//     for any T with a size that you can iterate: strings, vectors, arrays, spans
 //   - rules about text            (StartsWith<"...">, IpAddress, Url, ...)
 //     for any T that converts to std::string_view
-// plus Satisfies<lambda, "text"> for one-off rules that don't deserve a struct.
+// plus Satisfies<lambda, "text"> for a one-off rule that does not deserve a struct.
 
-// fixed_string exists only so a string literal can be a template parameter.
+// fixed_string exists only so that a string literal can be a template parameter.
 template <std::size_t N>
 struct fixed_string {
     char data[N]{};
@@ -238,7 +236,7 @@ struct Positive {
     static std::string requirement() { return "> 0"; }
 };
 
-// Zero or more. With Positive and NonZero, this completes the three sign checks.
+// Zero or more. Positive, NonZero and NonNegative are the three sign checks.
 struct NonNegative {
     static constexpr bool passes(auto v) { return v >= 0; }
     static std::string requirement() { return ">= 0"; }
@@ -274,7 +272,7 @@ struct GreaterThan {
 };
 
 // Unlike Positive, this allows negative values. Use it for divisors and
-// strides, where -1 is fine and 0 is not.
+// strides, where -1 is valid and 0 is not.
 struct NonZero {
     static constexpr bool passes(auto v) { return v != 0; }
     static std::string requirement() { return "non-zero"; }
@@ -290,8 +288,8 @@ struct Odd {
     static std::string requirement() { return "odd"; }
 };
 
-// For raw pointers and copyable smart pointers. Put it first when other rules
-// follow, so they never read through a null pointer.
+// For raw pointers and copyable smart pointers. Put it first, so the rules
+// after it never read through a null pointer.
 struct NotNull {
     static constexpr bool passes(const auto& p) { return p != nullptr; }
     static std::string requirement() { return "not null"; }
@@ -304,7 +302,7 @@ struct MultipleOf {
     static std::string requirement() { return "a multiple of " + std::to_string(N); }
 };
 
-// Same check as MultipleOf, just a different intent. That being sizes and addresses.
+// The same check as MultipleOf, named for sizes and addresses.
 template <auto N>
 using Aligned = MultipleOf<N>;
 
@@ -314,9 +312,9 @@ struct FitsInBits {
     static constexpr bool passes(auto v) {
         if constexpr (N >= std::numeric_limits<unsigned long long>::digits) {
             // The upper bound 2^N is wider than `unsigned long long`, so every
-            // non-negative value already fits; only the sign check matters.
-            // The shift would be undefined behavior at this width, so it is
-            // not instantiated here (this also silences -Wshift-count-overflow).
+            // non-negative value fits. Only the sign check matters. A shift by
+            // this width is undefined behavior, so this branch does not
+            // instantiate it (this also silences -Wshift-count-overflow).
             return v >= 0;
         } else {
             return v >= 0 && static_cast<unsigned long long>(v) < (1ULL << N);
@@ -326,7 +324,7 @@ struct FitsInBits {
 };
 
 // Passes if the value is representable in the integer type U, so a narrowing
-// cast to U is safe. The signed counterpart of FitsInBits: FitsInBits<8> is
+// cast to U is safe. The signed counterpart of FitsInBits. FitsInBits<8> is
 // 0..255, FitsIn<int8_t> is -128..127.
 template <std::integral U>
 struct FitsIn {
@@ -344,8 +342,8 @@ struct OnlyBits {
     static std::string requirement() { return "within bit mask " + std::to_string(Mask); }
 };
 
-// Passes if every bit in Mask is set. The counterpart of OnlyBits: that one
-// says which bits may be set, this one says which bits must be set.
+// Passes if every bit in Mask is set. The counterpart of OnlyBits. OnlyBits
+// says which bits may be set. HasBits says which bits must be set.
 template <auto Mask>
 struct HasBits {
     static constexpr bool passes(auto v) { return (v & Mask) == Mask; }
@@ -353,8 +351,8 @@ struct HasBits {
 };
 
 // Rejects NaN and infinity. NaN compares false with everything, so Between
-// on its own would reject NaN with a misleading message. Put Finite first.
-// (v == v fails only for NaN; v - v == 0 fails only for infinity.)
+// alone rejects NaN with a misleading message. Put Finite first.
+// (v == v fails only for NaN. v - v == 0 fails only for infinity.)
 struct Finite {
     static constexpr bool passes(auto v) { return v == v && v - v == 0; }
     static std::string requirement() { return "finite"; }
@@ -405,9 +403,9 @@ struct Not {
     static std::string requirement() { return "not " + Rule::requirement(); }
 };
 
-// Keeps the check of Rule, replaces its message. A nested combinator can
-// produce "a power of two and <= 64, or one of {1000}"; wrap it in Named to
-// say what it means instead.
+// Keeps the check of Rule and replaces its message. A nested combinator can
+// produce "a power of two and <= 64, or one of {1000}". Wrap it in Named to
+// say what it means.
 template <typename Rule, fixed_string Description>
 struct Named {
     static constexpr bool passes(const auto& v) { return Rule::passes(v); }
@@ -458,7 +456,7 @@ template <std::size_t Lo, std::size_t Hi>
 using SizeBetween = AllOf<SizeAtLeast<Lo>, SizeAtMost<Hi>>;
 
 // Passes if every element passes Rule. The template parameter is a rule type,
-// so the whole toolbox applies to elements: Each<Between<-2048, 2047>>.
+// so the whole toolbox applies to elements. Example: Each<Between<-2048, 2047>>.
 template <typename Rule>
 struct Each {
     static constexpr bool passes(const auto& c) {
@@ -471,8 +469,8 @@ struct Each {
 };
 
 // Ascending, equal neighbours allowed. Add Unique for strictly ascending.
-// A hand-written loop, because <algorithm> alone is a third of the compile
-// time of this header.
+// A hand-written loop, because <algorithm> alone would be a third of the
+// compile time of this header.
 struct Sorted {
     static constexpr bool passes(const auto& c) {
         auto it = std::begin(c);
@@ -485,8 +483,8 @@ struct Sorted {
     static std::string requirement() { return "sorted"; }
 };
 
-// No two elements equal. Compares every pair, so it is O(n^2); fine for the
-// lookup tables and channel lists it is meant for.
+// No two elements equal. Compares every pair, so it is O(n^2). That is fine
+// for the lookup tables and channel lists it is meant for.
 struct Unique {
     static constexpr bool passes(const auto& c) {
         for (auto i = std::begin(c); i != std::end(c); ++i) {
@@ -507,11 +505,10 @@ struct Unique {
 // or a `const char*` (put NotNull first for that one).
 //
 // Hostname, Ipv4Address, Ipv6Address, EmailAddress, Url, MacAddress and Uuid
-// check the SHAPE of the text, at compile time when the value is a constant. They do not
-// resolve names, connect to anything, or implement every corner of the RFCs.
-// They accept what a well-formed value looks like and reject the rest, which
-// is what a boundary check needs. The exact shape each accepts is stated on
-// the rule.
+// check the SHAPE of the text, at compile time when the value is a constant.
+// They do not resolve names, connect to anything, or implement every corner
+// of the RFCs. They accept a well-formed value and reject the rest, which is
+// what a boundary check needs. Each rule states the exact shape it accepts.
 
 namespace detail {
 
@@ -602,17 +599,17 @@ constexpr bool is_ipv6(std::string_view s) {
     return compressed ? groups < 8 : groups == 8;
 }
 
-// The characters RFC 5322 allows in an unquoted local part, except the dot,
-// which is_email handles on its own.
+// The characters RFC 5322 allows in an unquoted local part, except the dot.
+// is_email handles the dot itself.
 constexpr bool is_atext(char c) {
     return is_alnum(c) || std::string_view{"!#$%&'*+-/=?^_`{|}~"}.find(c) != std::string_view::npos;
 }
 
 // local@domain. The local part is 1..64 atext characters with single dots
 // between them. The domain is a hostname with at least one dot. This is the
-// shape of nearly every real address. It rejects quoted local parts,
-// comments, and IP-literal domains, which RFC 5322 allows and almost nothing
-// uses.
+// shape of almost every real address. It rejects quoted local parts,
+// comments, and IP-literal domains. RFC 5322 allows them, and almost nothing
+// uses them.
 constexpr bool is_email(std::string_view s) {
     const std::size_t at = s.find('@');
     if (at == std::string_view::npos || at == 0 || at > 64) return false;
@@ -701,7 +698,7 @@ constexpr bool is_utf8(It it, It end) {
 
 }  // namespace detail
 
-// Every character is 0x20..0x7E, so no control characters, tabs or newlines,
+// Every character is 0x20..0x7E: no control characters, tabs or newlines,
 // and nothing outside ASCII. Text that is safe to log or show on a display.
 struct Printable {
     static constexpr bool passes(std::string_view s) {
@@ -782,8 +779,8 @@ struct Uuid {
     static std::string requirement() { return "a UUID"; }
 };
 
-// Unlike the other text rules, this one takes any container of bytes, so it
-// also works on std::vector<uint8_t> or std::span<const std::byte> straight
+// Unlike the other text rules, this one takes any container of bytes. So it
+// also works on a std::vector<uint8_t> or std::span<const std::byte> straight
 // off the wire.
 struct Utf8 {
     static constexpr bool passes(const auto& bytes) { return detail::is_utf8(std::begin(bytes), std::end(bytes)); }
@@ -794,7 +791,7 @@ struct Utf8 {
 // One-off rules
 // ---------------------------------------------------------------------------
 
-// Satisfies is just for a one-off rule from a lambda, so no struct needed
+// Satisfies makes a one-off rule from a lambda, with no struct to write.
 template <auto Predicate, fixed_string Description>
 struct Satisfies {
     static constexpr bool passes(const auto& v) { return Predicate(v); }

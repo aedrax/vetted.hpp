@@ -1,7 +1,7 @@
-// This example's validated types, one line each
+// The validated types for this example, one line each.
 //
-// Rules can be listed directly (they run in order and stop at the first
-// failure) or bundled with AllOf/Between.
+// List rules directly (they run in order and stop at the first failure), or
+// bundle them with AllOf and Between.
 #pragma once
 
 #include <cstdint>
@@ -12,22 +12,22 @@
 
 #include <vetted.hpp>
 
-// An example is allowed this. A real project would qualify (vetted::Validated)
-// or pull in just the names it uses.
+// Fine for an example. A real project should qualify names (vetted::Validated)
+// or pull in only the names it uses.
 using namespace vetted;
 
 constexpr int32_t kMaxFFTSize = 65536;
 
 // BlockOffset is bounded so that `offset + size` can never overflow int64_t.
-// A rule promises exactly what it says: AtLeast<0> alone would let INT64_MAX
-// through, and process_iq_block's addition would be undefined behavior.
+// A rule promises exactly what it says. AtLeast<0> alone lets INT64_MAX
+// through, and the addition in process_iq_block is then undefined behavior.
 constexpr int64_t kMaxBlockOffset = std::numeric_limits<int64_t>::max() - kMaxFFTSize;
 
 using ChannelID   = Validated<int16_t, Positive, AtMost<4096>>;
 
 // Channels 1..100 are the VHF band. A VhfChannel is a ChannelID with one more
-// rule, so it is accepted wherever a ChannelID is, with no re-check. Going the
-// other way is explicit: VhfChannel::try_from(channel).
+// rule, so it is accepted wherever a ChannelID is, with no re-check. The other
+// direction is explicit: VhfChannel::try_from(channel).
 using VhfChannel  = ChannelID::With<AtMost<100>>;
 using BlockOffset = Validated<int64_t, AtLeast<0>, AtMost<kMaxBlockOffset>>;
 using FFTSize     = Validated<int32_t, PowerOfTwo, AtMost<kMaxFFTSize>>;
@@ -59,7 +59,7 @@ using TrimOffset  = Validated<int32_t, FitsIn<int8_t>>;                    // re
 using CtrlWord    = Validated<uint16_t, HasBits<0x01>, OnlyBits<0x0F>>;    // bit 0 is enable and must be set
 using DeviceName  = Validated<const char*, NotNull>;
 
-// Containers: for anything with a size() you can iterate. Text: for anything that converts to string_view.
+// Containers: any T with a size() that you can iterate. Text: any T that converts to string_view.
 using Payload     = Validated<std::vector<uint8_t>, NonEmpty, SizeAtMost<256>>;
 using Samples     = Validated<std::vector<int16_t>, NonEmpty, Each<Between<-2048, 2047>>>;  // 12-bit ADC
 using ScanList    = Validated<std::vector<ChannelID>, NonEmpty, Sorted, Unique>;  // elements already validated
@@ -78,22 +78,22 @@ using Operator    = Validated<std::string_view, EmailAddress>;
 using UpdateUrl   = Validated<std::string_view, Url, StartsWith<"https://">>;
 
 // Validated types compose into structs like any other member. A RadioConfig
-// can only be built from a valid ChannelID, Baud and Percent, so the struct
-// as a whole carries the same guarantee: if you have one, every field passed.
+// can only be built from a valid ChannelID, Baud and Percent, so the whole
+// struct carries the same guarantee. If you have one, every field passed.
 struct RadioConfig {
     ChannelID channel;
     Baud      baud;
     Percent   volume;
 };
 
-// No hidden cost: the struct is laid out exactly as if the fields were raw ints.
+// No hidden cost. The struct has the same layout as one with raw int fields.
 struct RadioConfigRaw { int16_t channel; int32_t baud; int volume; };
 static_assert(sizeof(RadioConfig) == sizeof(RadioConfigRaw));
 static_assert(alignof(RadioConfig) == alignof(RadioConfigRaw));
 static_assert(std::is_trivially_copyable_v<RadioConfig>);
 
 // A rule can span several fields. Validated<T> works for any T, so wrap a
-// struct and write a rule that looks at the whole thing. Here, each field is
+// struct and write a rule that reads the whole thing. Here, each field is
 // valid on its own, but the pair must also fit inside the capture buffer.
 // Neither BlockOffset nor FFTSize can promise that alone.
 constexpr int64_t kCaptureBufferSamples = int64_t{1} << 20;
@@ -105,7 +105,7 @@ struct IQRange {
 
 struct WithinCaptureBuffer {
     static constexpr bool passes(const IQRange& r) {
-        return r.offset + r.size <= kCaptureBufferSamples;  // can't overflow: see kMaxBlockOffset
+        return r.offset + r.size <= kCaptureBufferSamples;  // cannot overflow: see kMaxBlockOffset
     }
     static std::string requirement() {
         return "offset + size <= " + std::to_string(kCaptureBufferSamples);
