@@ -266,6 +266,87 @@ cmake -S . -B build -DDEMO_COMPILE_ERROR=ON && cmake --build build
 | `examples/main.cc` | The call chain before and after, the parsing boundary, and the demo |
 | `docs/` | Rules in depth, validated types in structs, and the safety and performance notes |
 
+## FAQ
+
+### Why not write a class with an explicit constructor by hand?
+
+You can. This library generates that class for you. The difference is the
+cost per type and how types relate. A hand-written type is 10 to 15 lines.
+Here it is one `using` line. A check like `AtMost<1000>` is a value you can
+reuse in any type, apply to every element with `Each`, and combine with
+`AllOf`, `AnyOf` and `Not`. Refinement is decided by comparing rule lists,
+not by a declared parent class, so `Quantity::With<A, B>` converts to both
+`Quantity::With<A>` and `Quantity::With<B>` with no extra code. Narrowing
+runs only the rules the source type did not prove. The build-time failure
+and the error message are written once, in the library, not once per class.
+
+### Can I change a validated value after I make it?
+
+Only by assignment from another value of the same type. There are no
+setters, and `get()` returns a const reference. `q = Quantity{5}` compiles
+and runs the rules. `q = 5` and `q = q + 1` do not compile, because a plain
+`int` cannot become a `Quantity` without a visible constructor call.
+
+### Why does `Quantity q = 5;` not compile?
+
+The constructor is `explicit`. Copy-initialization from a raw value would
+hide the check. Write `Quantity q{5};` or `Quantity q = Quantity{5};`. Both
+run the rules. A `constexpr` version runs them at build time.
+
+### Does it work with strings, vectors, structs and pointers?
+
+Yes. `Validated<T>` accepts any `T`. The container rules cover anything with
+a `size()` that you can iterate. The text rules cover anything that converts
+to `std::string_view`. For a struct, write a rule that reads the whole
+struct. For a pointer, put `NotNull` first. The example has one of each.
+
+### Does it copy or move the value in?
+
+The constructor takes `T` by value, so a moved argument is moved in.
+`Comment c{std::move(text)}` leaves `text` empty.
+
+### Is there a default constructor?
+
+No. A default value would have to pass the rules, and the library cannot
+know one. `std::vector<Quantity>` works, because `push_back` and
+`emplace_back` do not need one. A plain array `Quantity arr[3]` does not
+compile. For "not set yet", use `std::optional<Quantity>`.
+
+### Does it work as a map key, or with `std::sort`?
+
+For numeric `T`, yes. `std::sort`, `std::map` and `==` work through the
+implicit conversion to `T`. `std::unordered_map` does not, because there is
+no `std::hash` specialization. Hash `q.get()` instead, or add one yourself.
+
+### Can I build with exceptions disabled?
+
+Yes, if you use only `try_from`. The throwing constructor contains a `throw`,
+and the compiler rejects it under `-fno-exceptions` only when you use it.
+`try_from` never throws.
+
+### Does it need C++20?
+
+Yes. It uses concepts, `auto` parameters, string literals as template
+parameters, and `std::is_constant_evaluated`. There is no C++17 build.
+
+### How do I write my own rule?
+
+A struct with a `static constexpr bool passes(auto v)` and a
+`static std::string requirement()`. That is all. See
+[How it works](#how-it-works) and [docs/rules.md](docs/rules.md).
+
+### What if two rules contradict each other?
+
+The type compiles, and nothing passes. `Validated<int, Positive, AtMost<0>>`
+rejects every value. The library does not check that a rule list is
+satisfiable, so test each type with at least one value that passes.
+
+### What does it cost at runtime?
+
+Nothing on the read side. The wrapper is the same size as `T` and passes in
+registers. The rules run once, on the way in. See
+[docs/safety-and-performance.md](docs/safety-and-performance.md).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
