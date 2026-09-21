@@ -633,8 +633,8 @@ constexpr bool is_url(std::string_view s) {
     std::size_t i = 1;
     while (i < s.size() && (is_alnum(s[i]) || s[i] == '+' || s[i] == '-' || s[i] == '.')) ++i;
     if (i + 1 >= s.size() || s[i] != ':') return false;
-    for (char c : s) {
-        if (c <= ' ' || c == 0x7f) return false;
+    for (unsigned char c : s) {
+        if (c <= ' ' || c >= 0x7f) return false;
     }
     return true;
 }
