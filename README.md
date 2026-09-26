@@ -183,6 +183,29 @@ using WebhookUrl = Validated<std::string_view, Url, StartsWith<"https://">>;
 constexpr WebhookUrl default_hook{"https://example.org/hooks"};   // the compiler checks the shape
 ```
 
+For a bound that changes while the program runs, each rule with a parameter
+has a `Var` form. It takes a reference to a variable instead of a constant.
+The variable must have static storage duration. The rule reads it each time
+a value is built, and never again.
+
+| Rule | The same check as |
+|---|---|
+| `AtLeastVar<v>`, `AtMostVar<v>`, `GreaterThanVar<v>`, `LessThanVar<v>` | `AtLeast<N>` and the others, with `v` as the bound |
+| `BetweenVar<lo, hi>` | `Between<Lo, Hi>` |
+| `InVar<c>`, `NotInVar<c>` | `In<...>`, `NotIn<...>`, where `c` is a container of allowed values |
+| `MultipleOfVar<v>`, `AlignedVar<v>` | `MultipleOf<N>`. If `v` is 0, only 0 passes. |
+| `FitsInBitsVar<v>`, `OnlyBitsVar<v>`, `HasBitsVar<v>` | `FitsInBits<N>`, `OnlyBits<Mask>`, `HasBits<Mask>` |
+| `SizeIsVar<v>`, `SizeAtLeastVar<v>`, `SizeAtMostVar<v>`, `SizeBetweenVar<lo, hi>` | the size rules |
+| `StartsWithVar<s>`, `EndsWithVar<s>`, `ContainsVar<s>`, `OnlyCharsVar<s>` | the text rules, where `s` converts to `std::string_view` |
+
+```cpp
+inline std::atomic<int16_t> stock_on_hand{250};     // another thread updates this
+using InStockQuantity = Quantity::With<AtMostVar<stock_on_hand>>;
+```
+
+A value built before the variable changed is not re-checked. See
+[docs/rules.md](docs/rules.md#rules-against-a-variable).
+
 `Satisfies` is the escape hatch. It makes a rule from a lambda:
 
 ```cpp
@@ -353,6 +376,14 @@ parameters, and `std::is_constant_evaluated`. There is no C++17 build.
 A struct with a `static constexpr bool passes(auto v)` and a
 `static std::string requirement()`. That is all. See
 [How it works](#how-it-works) and [docs/rules.md](docs/rules.md).
+
+### Can a rule check against a value that changes at runtime?
+
+Yes. Each rule with a parameter has a `Var` form that takes a reference to a
+variable: `AtMostVar<max_gain>` instead of `AtMost<1000>`. The rule reads the
+variable when a value is built. A value built earlier is not re-checked when
+the variable changes. See
+[docs/rules.md](docs/rules.md#rules-against-a-variable).
 
 ### What if two rules contradict each other?
 

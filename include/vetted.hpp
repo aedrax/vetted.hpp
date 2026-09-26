@@ -14,6 +14,7 @@
 //        rules from other rules  AllOf<...>, AnyOf<...>, Not<...>, Named<R, "text">, Between<Lo, Hi>, ...
 //        rules about containers  NonEmpty, SizeAtMost<N>, Each<R>, Sorted, Unique, ...
 //        rules about text        StartsWith<"...">, Printable, Hostname, IpAddress, Url, Uuid, ...
+//        rules against a variable AtMostVar<max>, InVar<allowed>, SizeAtMostVar<n>, ...
 //        one-off rules           Satisfies<lambda, "text">
 //   3. Combining types          Both<A, B>, Common<A, B>, Either<A, B>
 //
@@ -789,6 +790,207 @@ struct Uuid {
 struct Utf8 {
     static constexpr bool passes(const auto& bytes) { return detail::is_utf8(std::begin(bytes), std::end(bytes)); }
     static std::string requirement() { return "well-formed UTF-8"; }
+};
+
+// ---------------------------------------------------------------------------
+// Rules against a variable
+// ---------------------------------------------------------------------------
+//
+// The rules above take their bound as a constant. The rules below take a
+// REFERENCE to a variable, so the bound can change while the program runs:
+//
+//     inline std::atomic<int16_t> stock_on_hand{250};
+//     using InStock = Validated<int16_t, Positive, AtMostVar<stock_on_hand>>;
+//
+// The variable must have static storage duration: a namespace-scope
+// variable (`inline` or `extern` in a header), or a static data member. Each
+// rule reads the variable when a value is built, and never again. A value
+// built before the variable changed is not re-checked. The type proves
+// "passed the bound in force at construction", not "passes the bound now".
+// Re-run try_from on the raw value when the bound changes, if that matters.
+//
+// The rule reads the variable with no lock. If another thread writes it,
+// make it a std::atomic. The rules read an atomic with load().
+//
+// A rule bound to a mutable variable cannot run at compile time, because the
+// answer is not known at compile time. `constexpr InStock x{1};` fails the
+// build. The other rules on the same type still run at compile time, and a
+// Var rule bound to a `constexpr` variable does too.
+//
+// Rules are matched by type for refinement and widening (section 3).
+// AtMostVar<stock_on_hand> is the same type wherever it is spelled, so it
+// widens like any other rule.
+
+namespace detail {
+
+// The current value of a variable: load() for a std::atomic, a copy otherwise.
+template <typename V>
+constexpr auto current(const V& var) {
+    if constexpr (requires { var.load(); }) {
+        return var.load();
+    } else {
+        return var;
+    }
+}
+
+}  // namespace detail
+
+template <auto& Min>
+struct AtLeastVar {
+    static constexpr bool passes(auto v) { return v >= detail::current(Min); }
+    static std::string requirement() { return ">= " + std::to_string(detail::current(Min)); }
+};
+
+template <auto& Max>
+struct AtMostVar {
+    static constexpr bool passes(auto v) { return v <= detail::current(Max); }
+    static std::string requirement() { return "<= " + std::to_string(detail::current(Max)); }
+};
+
+template <auto& N>
+struct LessThanVar {
+    static constexpr bool passes(auto v) { return v < detail::current(N); }
+    static std::string requirement() { return "< " + std::to_string(detail::current(N)); }
+};
+
+template <auto& N>
+struct GreaterThanVar {
+    static constexpr bool passes(auto v) { return v > detail::current(N); }
+    static std::string requirement() { return "> " + std::to_string(detail::current(N)); }
+};
+
+// If the variable is 0, only 0 passes. There is no division by zero.
+template <auto& N>
+struct MultipleOfVar {
+    static constexpr bool passes(auto v) {
+        const auto n = detail::current(N);
+        if (n == 0) return v == 0;
+        return v % n == 0;
+    }
+    static std::string requirement() { return "a multiple of " + std::to_string(detail::current(N)); }
+};
+
+template <auto& N>
+using AlignedVar = MultipleOfVar<N>;
+
+template <auto& Lo, auto& Hi>
+using BetweenVar = AllOf<AtLeastVar<Lo>, AtMostVar<Hi>>;
+
+// Passes if the value is representable in an unsigned field of Bits bits.
+// The runtime counterpart of FitsInBits<N>. A negative Bits passes nothing.
+template <auto& Bits>
+struct FitsInBitsVar {
+    static constexpr bool passes(auto v) {
+        const auto n = detail::current(Bits);
+        if (std::cmp_less(n, 0)) return false;
+        if (std::cmp_greater_equal(n, std::numeric_limits<unsigned long long>::digits)) {
+            return v >= 0;  // every non-negative value fits. See FitsInBits.
+        }
+        return v >= 0 && static_cast<unsigned long long>(v) < (1ULL << n);
+    }
+    static std::string requirement() {
+        return "representable in " + std::to_string(detail::current(Bits)) + " bits";
+    }
+};
+
+template <auto& Mask>
+struct OnlyBitsVar {
+    static constexpr bool passes(auto v) { return (v & ~detail::current(Mask)) == 0; }
+    static std::string requirement() {
+        return "within bit mask " + std::to_string(detail::current(Mask));
+    }
+};
+
+template <auto& Mask>
+struct HasBitsVar {
+    static constexpr bool passes(auto v) {
+        const auto m = detail::current(Mask);
+        return (v & m) == m;
+    }
+    static std::string requirement() {
+        return "with bit mask " + std::to_string(detail::current(Mask)) + " set";
+    }
+};
+
+// Passes if the value is in the container that Allowed names. Any container
+// you can iterate: std::vector, std::array, std::set, and so on.
+template <auto& Allowed>
+struct InVar {
+    static constexpr bool passes(const auto& v) {
+        for (const auto& a : Allowed) {
+            if (v == a) return true;
+        }
+        return false;
+    }
+    static std::string requirement() {
+        std::string s = "one of {";
+        for (const auto& a : Allowed) s += std::to_string(a) + " ";
+        if (s.back() == ' ') s.back() = '}'; else s += '}';
+        return s;
+    }
+};
+
+template <auto& Values>
+using NotInVar = Not<InVar<Values>>;
+
+// Container sizes. The variable holds a count, for example a std::size_t.
+template <auto& N>
+struct SizeIsVar {
+    static constexpr bool passes(const auto& c) { return std::size(c) == detail::current(N); }
+    static std::string requirement() { return "of size " + std::to_string(detail::current(N)); }
+};
+
+template <auto& N>
+struct SizeAtLeastVar {
+    static constexpr bool passes(const auto& c) { return std::size(c) >= detail::current(N); }
+    static std::string requirement() { return "of size >= " + std::to_string(detail::current(N)); }
+};
+
+template <auto& N>
+struct SizeAtMostVar {
+    static constexpr bool passes(const auto& c) { return std::size(c) <= detail::current(N); }
+    static std::string requirement() { return "of size <= " + std::to_string(detail::current(N)); }
+};
+
+template <auto& Lo, auto& Hi>
+using SizeBetweenVar = AllOf<SizeAtLeastVar<Lo>, SizeAtMostVar<Hi>>;
+
+// Text. The variable is anything that converts to std::string_view, for
+// example a std::string.
+template <auto& Prefix>
+struct StartsWithVar {
+    static constexpr bool passes(std::string_view s) { return s.starts_with(std::string_view(Prefix)); }
+    static std::string requirement() {
+        return "starting with \"" + std::string(std::string_view(Prefix)) + "\"";
+    }
+};
+
+template <auto& Suffix>
+struct EndsWithVar {
+    static constexpr bool passes(std::string_view s) { return s.ends_with(std::string_view(Suffix)); }
+    static std::string requirement() {
+        return "ending with \"" + std::string(std::string_view(Suffix)) + "\"";
+    }
+};
+
+template <auto& Part>
+struct ContainsVar {
+    static constexpr bool passes(std::string_view s) {
+        return s.find(std::string_view(Part)) != std::string_view::npos;
+    }
+    static std::string requirement() {
+        return "containing \"" + std::string(std::string_view(Part)) + "\"";
+    }
+};
+
+template <auto& Allowed>
+struct OnlyCharsVar {
+    static constexpr bool passes(std::string_view s) {
+        return s.find_first_not_of(std::string_view(Allowed)) == std::string_view::npos;
+    }
+    static std::string requirement() {
+        return "only characters from \"" + std::string(std::string_view(Allowed)) + "\"";
+    }
 };
 
 // ---------------------------------------------------------------------------

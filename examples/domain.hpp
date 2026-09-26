@@ -5,8 +5,11 @@
 // failure), or bundle them with AllOf and Between.
 #pragma once
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -91,6 +94,58 @@ using ApiHost      = Validated<std::string_view, Hostname>;
 using ServerAddress= Validated<std::string_view, IpAddress>;                     // IPv4 or IPv6
 using ContactEmail = Validated<std::string_view, EmailAddress>;
 using WebhookUrl   = Validated<std::string_view, Url, StartsWith<"https://">>;
+
+// Settings that an operator changes while the shop runs. A Var rule takes a
+// reference to a variable and reads it when a value is built. The variable
+// must have static storage duration. Make it a std::atomic if another thread
+// writes it. See "Rules against a variable" in vetted.hpp.
+inline std::atomic<int16_t> stock_on_hand{250};                 // written by the warehouse thread
+inline int32_t     min_order_cents     = 500;
+inline int32_t     shelf_count         = 12;
+inline double      free_shipping_over  = 50.0;
+inline int32_t     pack_size           = 6;
+inline int64_t     sector_size         = 4096;
+inline int32_t     open_hour           = 9;
+inline int32_t     close_hour          = 17;
+inline std::size_t id_bits             = 12;
+inline uint16_t    allowed_perms       = 0x7;
+inline uint16_t    required_perms      = 0x1;
+inline std::vector<int32_t> shipping_options{1, 2, 5};
+inline std::vector<int>     closed_floors{0, 13};
+inline std::size_t sku_length          = 8;
+inline std::size_t min_password_length = 8;
+inline std::size_t max_review_length   = 140;
+inline std::size_t min_tags            = 1;
+inline std::size_t max_tags            = 5;
+inline std::string sku_prefix          = "SKU-";
+inline std::string report_suffix       = ".pdf";
+inline std::string promo_tag           = "-promo";
+inline std::string coupon_alphabet     = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+// One type per Var rule in the toolbox.
+using InStockQuantity = Quantity::With<AtMostVar<stock_on_hand>>;          // a Quantity, with no re-check
+using OrderCents      = Validated<int32_t, AtLeastVar<min_order_cents>>;
+using ShelfIndex      = Validated<int32_t, NonNegative, LessThanVar<shelf_count>>;
+using FreeShipTotal   = Validated<double, Finite, GreaterThanVar<free_shipping_over>>;
+using PackQuantity    = Validated<int32_t, Positive, MultipleOfVar<pack_size>>;
+using SectorOffset    = Validated<int64_t, NonNegative, AlignedVar<sector_size>>;
+using DeliveryHour    = Validated<int32_t, BetweenVar<open_hour, close_hour>>;
+using TenantId        = Validated<int32_t, FitsInBitsVar<id_bits>>;
+using UserPerms       = Validated<uint16_t, OnlyBitsVar<allowed_perms>>;
+using SharedPerms     = Validated<uint16_t, HasBitsVar<required_perms>, OnlyBitsVar<allowed_perms>>;
+using CustomShipping  = Validated<int32_t, InVar<shipping_options>>;
+using OpenFloor       = Validated<int, Between<-2, 50>, NotInVar<closed_floors>>;
+using Sku             = Validated<std::string_view, SizeIsVar<sku_length>, StartsWithVar<sku_prefix>>;
+using Password        = Validated<std::string_view, SizeAtLeastVar<min_password_length>>;
+using ReviewText      = Validated<std::string, Utf8, SizeAtMostVar<max_review_length>>;
+using TagList         = Validated<std::vector<std::string>, SizeBetweenVar<min_tags, max_tags>>;
+using ReportFile      = Validated<std::string_view, EndsWithVar<report_suffix>>;
+using PromoCode       = Validated<std::string_view, ContainsVar<promo_tag>>;
+using CouponCode      = Validated<std::string_view, SizeIs<8>, OnlyCharsVar<coupon_alphabet>>;
+
+// A Var rule bound to a constexpr variable still runs at compile time.
+inline constexpr int32_t kMaxRetries = 5;
+using RetryCount      = Validated<int32_t, NonNegative, AtMostVar<kMaxRetries>>;
 
 // Validated types compose into structs like any other member. An Order can
 // only be built from a valid Quantity, ShippingDays and Percent, so the whole

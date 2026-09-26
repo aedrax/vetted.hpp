@@ -177,6 +177,57 @@ one. `passes` can call anything.
 For a `const char*`, put `NotNull` first, so the text rules never read
 through a null pointer.
 
+## Rules against a variable
+
+The rules above take their bound as a constant. Each rule with a parameter
+also has a `Var` form. It takes a reference to a variable, so the bound can
+change while the program runs:
+
+```cpp
+inline std::atomic<int16_t> stock_on_hand{250};     // the warehouse thread updates this
+inline std::vector<int32_t> shipping_options{1, 2, 5};
+inline std::string          sku_prefix = "SKU-";
+
+using InStockQuantity = Quantity::With<AtMostVar<stock_on_hand>>;
+using CustomShipping  = Validated<int32_t, InVar<shipping_options>>;
+using Sku             = Validated<std::string_view, StartsWithVar<sku_prefix>>;
+```
+
+The variable must have static storage duration: a namespace-scope variable
+(`inline` or `extern` in a header) or a static data member. The value rules
+and size rules take a number. `InVar` and `NotInVar` take a container of
+allowed values. The text rules take anything that converts to
+`std::string_view`. A `std::atomic` works everywhere a number does. The rule
+reads it with `load()`.
+
+Four things to know:
+
+- **The check runs once, when the value is built.** A value built before the
+  variable changed is not re-checked. The type proves "passed the bound in
+  force at construction", not "passes the bound now". If the second matters,
+  run `try_from` on the raw value again when the variable changes.
+- **The rule reads the variable with no lock.** If another thread writes it,
+  make it a `std::atomic`.
+- **A rule bound to a mutable variable does not run at compile time**, because
+  the answer is not known at compile time. `constexpr InStockQuantity x{1};`
+  fails the build. The other rules on the same type still run at compile
+  time. A `Var` rule bound to an `inline constexpr` variable runs at compile
+  time as usual.
+- **Refinement and widening work as for any rule.** `AtMostVar<stock_on_hand>`
+  is one type wherever it is spelled, so `InStockQuantity` widens to
+  `Quantity` for free.
+
+To write your own, take the variable as a reference template parameter and
+read it with `detail::current`, which calls `load()` on an atomic:
+
+```cpp
+template <auto& Limit>
+struct AtMostVar {
+    static constexpr bool passes(auto v) { return v <= detail::current(Limit); }
+    static std::string requirement() { return "<= " + std::to_string(detail::current(Limit)); }
+};
+```
+
 ## Rules over structs
 
 `Validated<T>` works for any `T`, so a rule can look at several fields at

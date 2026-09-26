@@ -5,6 +5,7 @@
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 #include "domain.hpp"
@@ -342,6 +343,55 @@ int main() {
     show("WebhookUrl{\"http://example.org/hooks\"}",  [] { return WebhookUrl{"http://example.org/hooks"}; });
     show("WebhookUrl{\"example.org/hooks\"}",         [] { return WebhookUrl{"example.org/hooks"}; });
 
+
+    std::cout << "\n== Rules against a variable ==\n";
+    // The rule reads the variable when the value is built, and never again.
+    InStockQuantity in_stock{200};
+    handle_request(in_stock);  // InStockQuantity -> Quantity: implicit, nothing to check
+    stock_on_hand = 100;
+    std::cout << "  stock_on_hand is now 100. The earlier " << in_stock << " stays as built.\n";
+    show("InStockQuantity{200}", [] { return InStockQuantity{200}; });
+    show("InStockQuantity{100}", [] { return InStockQuantity{100}; });
+    // Bound to a constexpr variable, the rule runs at compile time as usual.
+    constexpr RetryCount default_retries{3};
+    static_assert(default_retries == 3);
+    std::cout << "  compile-time: RetryCount{" << default_retries << "}\n";
+    show("OrderCents{500}",        [] { return OrderCents{500}; });
+    show("OrderCents{499}",        [] { return OrderCents{499}; });
+    show("ShelfIndex{11}",         [] { return ShelfIndex{11}; });
+    show("ShelfIndex{12}",         [] { return ShelfIndex{12}; });
+    show("FreeShipTotal{50.01}",   [] { return FreeShipTotal{50.01}; });
+    show("FreeShipTotal{50.0}",    [] { return FreeShipTotal{50.0}; });
+    show("PackQuantity{12}",       [] { return PackQuantity{12}; });
+    show("PackQuantity{10}",       [] { return PackQuantity{10}; });
+    show("SectorOffset{8192}",     [] { return SectorOffset{8192}; });
+    show("SectorOffset{8000}",     [] { return SectorOffset{8000}; });
+    show("DeliveryHour{17}",       [] { return DeliveryHour{17}; });
+    show("DeliveryHour{18}",       [] { return DeliveryHour{18}; });
+    show("TenantId{4095}",         [] { return TenantId{4095}; });
+    show("TenantId{4096}",         [] { return TenantId{4096}; });
+    show("UserPerms{0b110}",       [] { return UserPerms{0b110}; });
+    show("UserPerms{0b1000}",      [] { return UserPerms{0b1000}; });
+    show("SharedPerms{0x3}",       [] { return SharedPerms{0x3}; });
+    show("SharedPerms{0x2}",       [] { return SharedPerms{0x2}; });
+    show("CustomShipping{2}",      [] { return CustomShipping{2}; });
+    show("CustomShipping{3}",      [] { return CustomShipping{3}; });
+    show("OpenFloor{12}",          [] { return OpenFloor{12}; });
+    show("OpenFloor{13}",          [] { return OpenFloor{13}; });
+    show("Sku{\"SKU-1234\"}",      [] { return Sku{"SKU-1234"}; });
+    show("Sku{\"ABC-1234\"}",      [] { return Sku{"ABC-1234"}; });
+    show("Password{\"correct horse\"}", [] { return Password{"correct horse"}; });
+    show("Password{\"hunter2\"}",  [] { return Password{"hunter2"}; });
+    show("ReviewText{\"Five stars\"}", [] { return ReviewText{"Five stars"}; });
+    show("ReviewText{141 chars}",  [] { return ReviewText{std::string(141, 'x')}; });
+    show("TagList{\"sale\", \"new\"}", [] { return TagList{{"sale", "new"}}; });
+    show("TagList{}",              [] { return TagList{{}}; });
+    show("ReportFile{\"q3.pdf\"}", [] { return ReportFile{"q3.pdf"}; });
+    show("ReportFile{\"q3.docx\"}", [] { return ReportFile{"q3.docx"}; });
+    show("PromoCode{\"summer-promo\"}", [] { return PromoCode{"summer-promo"}; });
+    show("PromoCode{\"summer\"}",  [] { return PromoCode{"summer"}; });
+    show("CouponCode{\"SAVE2K26\"}", [] { return CouponCode{"SAVE2K26"}; });
+    show("CouponCode{\"SAVE2026\"}", [] { return CouponCode{"SAVE2026"}; });   // the alphabet has no 0 or O
 
     std::cout << "\n== Combining types ==\n";
     constexpr GiftPair pair{4};

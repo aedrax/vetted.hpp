@@ -53,3 +53,7 @@ survive math. Reading out is free. Only going in is guarded.
   for convenience, the whole thing turns back into a plain `int`.
 - The type says "this number is in range" and nothing else. It is not memory
   safety or thread safety.
+- A `Var` rule (`AtMostVar<limit>`) reads its variable when the value is
+  built. The proof is "passed the bound in force at construction". A later
+  change to the variable does not change existing values, and does not
+  re-check them.
