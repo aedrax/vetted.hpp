@@ -30,6 +30,19 @@ using Quantity     = Validated<int16_t, Positive, AtMost<1000>>;   // items in o
 // one more rule, so it is accepted wherever a Quantity is, with no re-check.
 // The other direction is explicit: GiftQuantity::try_from(quantity).
 using GiftQuantity = Quantity::With<AtMost<5>>;
+
+// Shoes and socks are sold in pairs.
+using PairQuantity = Quantity::With<Even>;
+
+// Combining types. Both: a gift-wrapped pair, so 2 or 4. Common: what the two
+// share, which is Quantity itself. Either: the promotion applies to small
+// orders or to full pairs. A GiftPair is accepted wherever a GiftQuantity, a
+// PairQuantity or a Quantity is, with no re-check.
+using GiftPair      = Both<GiftQuantity, PairQuantity>;
+using AnyQuantity   = Common<GiftQuantity, PairQuantity>;
+using PromoQuantity = Either<GiftQuantity, PairQuantity>;
+static_assert(std::is_same_v<AnyQuantity, Quantity>);
+static_assert(std::is_same_v<GiftPair, Validated<int16_t, Positive, AtMost<1000>, AtMost<5>, Even>>);
 using FileOffset   = Validated<int64_t, AtLeast<0>, AtMost<kMaxFileOffset>>;
 using ChunkSize    = Validated<int32_t, PowerOfTwo, AtMost<kMaxChunkSize>>;  // read buffers
 using ShippingDays = Validated<int32_t, In<1, 2, 5>>;                       // overnight, two-day, standard

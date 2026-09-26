@@ -99,6 +99,45 @@ AtMost<100>` mean the same thing, but they are different types. So a
 `Validated<int, Between<0, 100>>`. The order of rules does not affect
 conversion.
 
+## Combining types
+
+`Both`, `Common` and `Either` make a type out of two or more types with the
+same `T`. Each is named by what a value has to do:
+
+```cpp
+using Quantity      = Validated<int16_t, Positive, AtMost<1000>>;
+using GiftQuantity  = Quantity::With<AtMost<5>>;
+using PairQuantity  = Quantity::With<Even>;
+
+using GiftPair      = Both<GiftQuantity, PairQuantity>;
+// Validated<int16_t, Positive, AtMost<1000>, AtMost<5>, Even>
+
+using AnyQuantity   = Common<GiftQuantity, PairQuantity>;
+// Validated<int16_t, Positive, AtMost<1000>>, the same type as Quantity
+
+using PromoQuantity = Either<GiftQuantity, PairQuantity>;
+// Validated<int16_t, AnyOf<AllOf<Positive, AtMost<1000>, AtMost<5>>,
+//                          AllOf<Positive, AtMost<1000>, Even>>>
+```
+
+- `Both` keeps every rule of every type, in order of first appearance, with
+  duplicates removed. The result is narrower than each input, so it widens
+  to each one for free. A `GiftPair` goes wherever a `GiftQuantity`, a
+  `PairQuantity` or a `Quantity` goes.
+- `Common` keeps only the rules every type has, in the order of the first
+  type. The result is wider than each input, so each one widens to it for
+  free. `Common<GiftQuantity, PairQuantity>` is `Quantity` exactly.
+- `Either` makes one `AnyOf` rule from the full rule lists. A value passes
+  if it passes all the rules of at least one type.
+
+All three take any number of types, and all rules are matched by type, as
+for widening.
+
+One limit: `Either` makes a new rule type, so a `GiftQuantity` does not
+widen to a `PromoQuantity` by itself, even though it should in principle.
+Write `PromoQuantity{gift}` or `PromoQuantity::try_from(gift)`, which
+re-runs the check. `Both` and `Common` have no such gap.
+
 ## Rules over containers and text
 
 `Validated<T>` is not limited to numbers. The container rules work for any

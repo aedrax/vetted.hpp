@@ -233,6 +233,25 @@ Rules are matched by type, so `Between<0, 100>` and the pair `AtLeast<0>,
 AtMost<100>` are different rules. The order of rules does not affect
 conversion.
 
+## Combining types
+
+Two or more types with the same `T` combine in three ways, each named by
+what a value has to do:
+
+```cpp
+using PairQuantity  = Quantity::With<Even>;                  // shoes come in pairs
+
+using GiftPair      = Both<GiftQuantity, PairQuantity>;      // Positive, AtMost<1000>, AtMost<5>, Even
+using AnyQuantity   = Common<GiftQuantity, PairQuantity>;    // Positive, AtMost<1000>: Quantity again
+using PromoQuantity = Either<GiftQuantity, PairQuantity>;    // all of one list, or all of the other
+```
+
+| | Rules | Conversions |
+|---|---|---|
+| `Both<A, B>` | every rule of both, no duplicates | widens to `A` and to `B` for free |
+| `Common<A, B>` | only the rules both have | `A` and `B` widen to it for free |
+| `Either<A, B>` | one `AnyOf` rule | explicit only. See [docs/rules.md](docs/rules.md). |
+
 ## Limits
 
 - The guarantee is only as good as the rules. Test them.

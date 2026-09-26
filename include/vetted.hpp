@@ -15,6 +15,7 @@
 //        rules about containers  NonEmpty, SizeAtMost<N>, Each<R>, Sorted, Unique, ...
 //        rules about text        StartsWith<"...">, Printable, Hostname, IpAddress, Url, Uuid, ...
 //        one-off rules           Satisfies<lambda, "text">
+//   3. Combining types          Both<A, B>, Common<A, B>, Either<A, B>
 //
 // Everything lives in namespace vetted. Requires C++20.
 #pragma once
@@ -54,9 +55,11 @@ namespace vetted {
 //   - Validated::try_from(v) returns std::nullopt on failure. Use it at the
 //                            boundary, for untrusted input.
 //
-// A type can take more rules without a repeat of the rules it has:
+// A type can take more rules without a repeat of the rules it has, and two
+// or more types with the same T can be combined (section 3):
 //
 //     using GiftQuantity = Quantity::With<AtMost<5>>;
+//     using GiftPair     = Both<GiftQuantity, PairQuantity>;
 //
 // Between two Validated types with the same T, the rule lists decide the
 // conversion. If every rule of the target is in the source, conversion is
@@ -633,7 +636,8 @@ constexpr bool is_url(std::string_view s) {
     std::size_t i = 1;
     while (i < s.size() && (is_alnum(s[i]) || s[i] == '+' || s[i] == '-' || s[i] == '.')) ++i;
     if (i + 1 >= s.size() || s[i] != ':') return false;
-    for (unsigned char c : s) {
+    for (char ch : s) {
+        const auto c = static_cast<unsigned char>(ch);
         if (c <= ' ' || c >= 0x7f) return false;
     }
     return true;
@@ -797,5 +801,123 @@ struct Satisfies {
     static constexpr bool passes(const auto& v) { return Predicate(v); }
     static std::string requirement() { return Description.data; }
 };
+
+// ============================================================================
+// Combining types
+// ============================================================================
+//
+// Three ways to make a Validated type out of two or more others with the
+// same T. Each is named by what a value has to do:
+//
+//   Both<A, B, ...>    every rule of every type, duplicates removed. Narrower
+//                      than each of them, so it widens to each one for free.
+//   Common<A, B, ...>  only the rules every type has. Wider than each of
+//                      them, so each one widens to it for free.
+//   Either<A, B, ...>  all the rules of at least one type. One AnyOf rule.
+//
+// Rules are matched by type, as for widening. Either makes a new rule type,
+// so an A does not widen to Either<A, B> by itself. Write Either<A, B>{a}.
+
+namespace detail {
+
+template <typename... Rs>
+struct rules {};
+
+template <typename V>
+struct traits;
+template <typename T, typename... Rs>
+struct traits<Validated<T, Rs...>> {
+    using value_type = T;
+    using rules = detail::rules<Rs...>;
+    using all_of = AllOf<Rs...>;
+};
+
+template <typename T, typename List>
+struct make;
+template <typename T, typename... Rs>
+struct make<T, rules<Rs...>> {
+    using type = Validated<T, Rs...>;
+};
+
+// rules<A...>, rules<B...>, ... joined into one list.
+template <typename... Lists>
+struct concat {
+    using type = rules<>;
+};
+template <typename... A>
+struct concat<rules<A...>> {
+    using type = rules<A...>;
+};
+template <typename... A, typename... B, typename... Lists>
+struct concat<rules<A...>, rules<B...>, Lists...> : concat<rules<A..., B...>, Lists...> {};
+
+// rules<...> without duplicates. The first occurrence stays.
+template <typename Acc, typename... Rs>
+struct unique {
+    using type = Acc;
+};
+template <typename... Acc, typename R, typename... Rs>
+struct unique<rules<Acc...>, R, Rs...>
+    : unique<std::conditional_t<one_of<R, Acc...>, rules<Acc...>, rules<Acc..., R>>, Rs...> {};
+
+template <typename List>
+struct dedupe;
+template <typename... Rs>
+struct dedupe<rules<Rs...>> : unique<rules<>, Rs...> {};
+
+template <typename R, typename List>
+constexpr bool in_list = false;
+template <typename R, typename... Rs>
+constexpr bool in_list<R, rules<Rs...>> = one_of<R, Rs...>;
+
+// The rules of the first list that are in every other list.
+template <typename Acc, typename List, typename... Others>
+struct common;
+template <typename Acc, typename... Others>
+struct common<Acc, rules<>, Others...> {
+    using type = Acc;
+};
+template <typename... Acc, typename R, typename... Rs, typename... Others>
+struct common<rules<Acc...>, rules<R, Rs...>, Others...>
+    : common<std::conditional_t<(in_list<R, Others> && ...), rules<Acc..., R>, rules<Acc...>>,
+             rules<Rs...>, Others...> {};
+
+template <typename First, typename... More>
+struct same_value_type {
+    using type = typename traits<First>::value_type;
+    static_assert((std::is_same_v<type, typename traits<More>::value_type> && ...),
+                  "Both, Common and Either need Validated types with the same T");
+};
+
+template <typename First, typename... More>
+struct both {
+    using T = typename same_value_type<First, More...>::type;
+    using joined = typename concat<typename traits<First>::rules, typename traits<More>::rules...>::type;
+    using type = typename make<T, typename dedupe<joined>::type>::type;
+};
+
+template <typename First, typename... More>
+struct common_of {
+    using T = typename same_value_type<First, More...>::type;
+    using kept = typename common<rules<>, typename traits<First>::rules, typename traits<More>::rules...>::type;
+    using type = typename make<T, kept>::type;
+};
+
+template <typename First, typename... More>
+struct either {
+    using T = typename same_value_type<First, More...>::type;
+    using type = Validated<T, AnyOf<typename traits<First>::all_of, typename traits<More>::all_of...>>;
+};
+
+}  // namespace detail
+
+template <typename First, typename... More>
+using Both = typename detail::both<First, More...>::type;
+
+template <typename First, typename... More>
+using Common = typename detail::common_of<First, More...>::type;
+
+template <typename First, typename... More>
+using Either = typename detail::either<First, More...>::type;
 
 }  // namespace vetted

@@ -342,5 +342,17 @@ int main() {
     show("WebhookUrl{\"http://example.org/hooks\"}",  [] { return WebhookUrl{"http://example.org/hooks"}; });
     show("WebhookUrl{\"example.org/hooks\"}",         [] { return WebhookUrl{"example.org/hooks"}; });
 
+
+    std::cout << "\n== Combining types ==\n";
+    constexpr GiftPair pair{4};
+    gift_wrap(pair);        // GiftPair -> GiftQuantity: implicit, nothing to check
+    handle_request(pair);   // GiftPair -> Quantity: the same
+    show("GiftPair{4}",       [] { return GiftPair{4}; });
+    show("GiftPair{3}",       [] { return GiftPair{3}; });
+    show("GiftPair{6}",       [] { return GiftPair{6}; });
+    show("PromoQuantity{3}",  [] { return PromoQuantity{3}; });    // small order
+    show("PromoQuantity{40}", [] { return PromoQuantity{40}; });   // a pair
+    show("PromoQuantity{41}", [] { return PromoQuantity{41}; });
+
     return 0;
 }
