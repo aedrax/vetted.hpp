@@ -313,7 +313,8 @@ using Aligned = MultipleOf<N>;
 // Passes if the value is representable in an N-bit unsigned field.
 template <std::size_t N>
 struct FitsInBits {
-    static constexpr bool passes(auto v) {
+    static constexpr bool passes(auto v)
+        requires std::integral<decltype(v)> && (sizeof(v) <= sizeof(unsigned long long)) {
         if constexpr (N >= std::numeric_limits<unsigned long long>::digits) {
             // The upper bound 2^N is wider than `unsigned long long`, so every
             // non-negative value fits. Only the sign check matters. A shift by
@@ -880,7 +881,8 @@ using BetweenVar = AllOf<AtLeastVar<Lo>, AtMostVar<Hi>>;
 // The runtime counterpart of FitsInBits<N>. A negative Bits passes nothing.
 template <auto& Bits>
 struct FitsInBitsVar {
-    static constexpr bool passes(auto v) {
+    static constexpr bool passes(auto v)
+        requires std::integral<decltype(v)> && (sizeof(v) <= sizeof(unsigned long long)) {
         const auto n = detail::current(Bits);
         if (std::cmp_less(n, 0)) return false;
         if (std::cmp_greater_equal(n, std::numeric_limits<unsigned long long>::digits)) {
