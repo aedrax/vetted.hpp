@@ -884,11 +884,15 @@ struct FitsInBitsVar {
     static constexpr bool passes(auto v)
         requires std::integral<decltype(v)> && (sizeof(v) <= sizeof(unsigned long long)) {
         const auto n = detail::current(Bits);
+        constexpr auto d = std::numeric_limits<unsigned long long>::digits;
         if (std::cmp_less(n, 0)) return false;
-        if (std::cmp_greater_equal(n, std::numeric_limits<unsigned long long>::digits)) {
+        if (std::cmp_greater_equal(n, d)) {
             return v >= 0;  // every non-negative value fits. See FitsInBits.
         }
-        return v >= 0 && static_cast<unsigned long long>(v) < (1ULL << n);
+        // n is in [0, d) here, so masking by d - 1 is a runtime no-op; it
+        // stops the compiler folding a constexpr n into an out-of-range
+        // shift count and emitting -Wshift-count-* (cf. FitsInBits).
+        return v >= 0 && static_cast<unsigned long long>(v) < (1ULL << (n & (d - 1)));
     }
     static std::string requirement() {
         return "representable in " + std::to_string(detail::current(Bits)) + " bits";
