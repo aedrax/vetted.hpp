@@ -47,8 +47,8 @@ survive math. Reading out is free. Only going in is guarded.
 
 - There is no default constructor and there are no setters. Once built, the
   value cannot change into something invalid.
-- The only way in is the `explicit` constructor, `try_from`, or implicit
-  widening from a more refined type. Widening is safe because the source type
+- The only way in is the `explicit` constructor, `try_from`, `check`, or
+  implicit widening from a more refined type. `violation` makes no value. Widening is safe because the source type
   already ran every target rule. If someone adds an "unchecked" constructor
   for convenience, the whole thing turns back into a plain `int`.
 - The type says "this number is in range" and nothing else. It is not memory

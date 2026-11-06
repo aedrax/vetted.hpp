@@ -21,6 +21,12 @@
 // Everything lives in namespace vetted. Requires C++20.
 #pragma once
 
+// The version of this header. CMakeLists.txt gives the same version in project().
+#define VETTED_VERSION_MAJOR 0
+#define VETTED_VERSION_MINOR 5
+#define VETTED_VERSION_PATCH 0
+
+#include <array>
 #include <concepts>
 #include <cstddef>
 #include <iterator>
@@ -30,8 +36,17 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
+#include <version>
+
+#if defined(__cpp_lib_expected)
+#include <expected>
+#endif
+#if defined(__cpp_lib_format)
+#include <format>
+#endif
 
 namespace vetted {
 
@@ -48,13 +63,20 @@ namespace vetted {
 //     static constexpr bool passes(T value);   // does the value pass?
 //     static std::string   requirement();      // the condition
 //
-// Two ways to make one:
-//   - Validated{v}           throws std::invalid_argument on failure. Use it
-//                            for values that must never be wrong (constants,
-//                            config). In a constexpr context it fails the
-//                            *build* instead.
-//   - Validated::try_from(v) returns std::nullopt on failure. Use it at the
-//                            boundary, for untrusted input.
+// Ways to make one:
+//   - Validated{v}            throws std::invalid_argument on failure. Use it
+//                             for values that must never be wrong (constants,
+//                             config). In a constexpr context it fails the
+//                             *build* instead.
+//   - Validated::try_from(v)  returns std::nullopt on failure. Use it at the
+//                             boundary, for untrusted input.
+//   - Validated::check(v)     (C++23) returns std::expected<Validated,
+//                             std::string>: the value, or the reason it failed.
+//
+// Validated::violation(v) gives the reason without a value: the message of
+// the first rule that fails, or std::nullopt. Use it in C++20, where there is
+// no std::expected. try_from, check and violation do not throw when a rule
+// fails. (A failed allocation for the message can throw std::bad_alloc.)
 //
 // A type can take more rules without a repeat of the rules it has, and two
 // or more types with the same T can be combined (section 3):
@@ -86,6 +108,25 @@ concept RuleFor = requires(T v) {
 template <typename Rule>
 void rule_violated() {}
 
+namespace detail {
+
+// A number as text, for the error messages. Floating point uses std::format
+// when the library has it: 1e9 prints as "1e+09" and 0.1 as "0.1", not as
+// "1000000000.000000" and "0.100000". Everything else uses std::to_string.
+// Integers print the same either way, and std::to_string also accepts a char,
+// a bool, or a type that converts to a number (a Validated<int>, for example).
+template <typename V>
+std::string to_text(const V& v) {
+#if defined(__cpp_lib_format)
+    if constexpr (std::is_floating_point_v<V>) {
+        return std::format("{}", v);
+    }
+#endif
+    return std::to_string(v);
+}
+
+}  // namespace detail
+
 // The error message prints the value when std::to_string can (numbers), and
 // quotes it when it is text (std::string, std::string_view). Otherwise it says
 // only "value" (structs, see Slice in examples/domain.hpp). A `const char*`
@@ -93,7 +134,7 @@ void rule_violated() {}
 template <typename T>
 std::string describe_value(const T& v) {
     if constexpr (requires { std::to_string(v); }) {
-        return "value " + std::to_string(v);
+        return "value " + detail::to_text(v);
     } else if constexpr (std::is_convertible_v<const T&, std::string_view> && !std::is_pointer_v<T>) {
         return "value \"" + std::string(std::string_view(v)) + "\"";
     } else {
@@ -113,12 +154,21 @@ class Validated {
     // Runs one rule. Fails the build at compile time, throws at runtime.
     template <typename Rule>
     static constexpr void enforce(const T& v) {
-        if (Rule::passes(v)) return;
+        if (std::optional<std::string> reason; fails<Rule>(v, reason)) throw std::invalid_argument(*reason);
+    }
+
+    // Runs one rule. Returns true and sets `reason` if the rule fails. Fails
+    // the build at compile time, because the message needs std::to_string or
+    // std::format, and neither one is constexpr.
+    template <typename Rule>
+    static constexpr bool fails(const T& v, std::optional<std::string>& reason) {
+        if (Rule::passes(v)) return false;
         if (std::is_constant_evaluated()) {
             rule_violated<Rule>();
         } else {
-            throw std::invalid_argument(describe_value(v) + ": expected " + Rule::requirement());
+            reason = describe_value(v) + ": expected " + Rule::requirement();
         }
+        return true;
     }
 
     // Runs every rule in order. The comma fold expands to
@@ -139,6 +189,11 @@ class Validated {
     constexpr Validated(T v, already_checked) : value_(v) {}
 
 public:
+    // The type and its rules, for code that reads them (a schema generator,
+    // for example). Visit the rules with a lambda that takes a std::tuple.
+    using value_type = T;
+    using rules      = std::tuple<Rules...>;
+
     // Throwing constructor. `explicit`, so a raw T never becomes a Validated by
     // accident. Every conversion is a visible decision to run the checks.
     constexpr explicit Validated(T v) : value_(checked(v)) {}
@@ -150,6 +205,41 @@ public:
         }
         return std::nullopt;
     }
+
+    // The reason for a failure, with no exception. Runs the rules in order
+    // and returns the message of the first rule that fails, in the same text
+    // as the exception: "value 5000: expected <= 1000". Returns std::nullopt
+    // if every rule passes. A passing constant gives std::nullopt at compile
+    // time. A failing constant fails the build and names the rule, as the
+    // constructor does.
+    static constexpr std::optional<std::string> violation(const T& v) {
+        std::optional<std::string> reason;
+        static_cast<void>((fails<Rules>(v, reason) || ...));
+        return reason;
+    }
+
+    // The same for narrowing. Runs only the rules the other type lacks.
+    template <RuleFor<T>... Proven>
+    static constexpr std::optional<std::string> violation(const Validated<T, Proven...>& other) {
+        std::optional<std::string> reason;
+        static_cast<void>(((!one_of<Rules, Proven...> && fails<Rules>(other.get(), reason)) || ...));
+        return reason;
+    }
+
+#if defined(__cpp_lib_expected)
+    // C++23: the value, or the reason it failed. The same checks and the same
+    // text as violation().
+    static constexpr std::expected<Validated, std::string> check(T v) {
+        if (auto reason = violation(v)) return std::unexpected(std::move(*reason));
+        return Validated{std::move(v), already_checked{}};
+    }
+
+    template <RuleFor<T>... Proven>
+    static constexpr std::expected<Validated, std::string> check(const Validated<T, Proven...>& other) {
+        if (auto reason = violation(other)) return std::unexpected(std::move(*reason));
+        return Validated{other.get(), already_checked{}};
+    }
+#endif
 
     // This type with more rules. Quantity::With<AtMost<5>> is
     // Validated<int16_t, Positive, AtMost<1000>, AtMost<5>>.
@@ -210,6 +300,11 @@ public:
 // Validated adds "expected" when it builds the error message, so combinators
 // can nest without repeated wording.
 //
+// A rule with a parameter gives it as a static constexpr member, so code can
+// read it: AtLeast<N>::min, AtMost<N>::max, In<...>::values, and so on. See
+// docs/rules.md for the full list. The rules against a variable have no
+// constexpr value, so they give no member.
+//
 // There are four kinds:
 //   - rules about the value       (Positive, AtMost<N>, In<a, b, c>, ...)
 //     their template parameters, if any, are VALUES
@@ -248,14 +343,16 @@ struct NonNegative {
 
 template <auto Min>
 struct AtLeast {
+    static constexpr auto min = Min;
     static constexpr bool passes(auto v) { return v >= Min; }
-    static std::string requirement() { return ">= " + std::to_string(Min); }
+    static std::string requirement() { return ">= " + detail::to_text(Min); }
 };
 
 template <auto Max>
 struct AtMost {
+    static constexpr auto max = Max;
     static constexpr bool passes(auto v) { return v <= Max; }
-    static std::string requirement() { return "<= " + std::to_string(Max); }
+    static std::string requirement() { return "<= " + detail::to_text(Max); }
 };
 
 struct PowerOfTwo {
@@ -265,14 +362,16 @@ struct PowerOfTwo {
 
 template <auto N>
 struct LessThan {
+    static constexpr auto bound = N;
     static constexpr bool passes(auto v) { return v < N; }
-    static std::string requirement() { return "< " + std::to_string(N); }
+    static std::string requirement() { return "< " + detail::to_text(N); }
 };
 
 template <auto N>
 struct GreaterThan {
+    static constexpr auto bound = N;
     static constexpr bool passes(auto v) { return v > N; }
-    static std::string requirement() { return "> " + std::to_string(N); }
+    static std::string requirement() { return "> " + detail::to_text(N); }
 };
 
 // Unlike Positive, this allows negative values. Use it for divisors and
@@ -302,8 +401,9 @@ struct NotNull {
 template <auto N>
 struct MultipleOf {
     static_assert(N != 0, "MultipleOf<0> divides by zero");
+    static constexpr auto divisor = N;
     static constexpr bool passes(auto v) { return v % N == 0; }
-    static std::string requirement() { return "a multiple of " + std::to_string(N); }
+    static std::string requirement() { return "a multiple of " + detail::to_text(N); }
 };
 
 // The same check as MultipleOf, named for sizes and addresses.
@@ -313,6 +413,7 @@ using Aligned = MultipleOf<N>;
 // Passes if the value is representable in an N-bit unsigned field.
 template <std::size_t N>
 struct FitsInBits {
+    static constexpr std::size_t bits = N;
     static constexpr bool passes(auto v)
         requires std::integral<decltype(v)> && (sizeof(v) <= sizeof(unsigned long long)) {
         if constexpr (N >= std::numeric_limits<unsigned long long>::digits) {
@@ -325,7 +426,7 @@ struct FitsInBits {
             return v >= 0 && static_cast<unsigned long long>(v) < (1ULL << N);
         }
     }
-    static std::string requirement() { return "representable in " + std::to_string(N) + " bits"; }
+    static std::string requirement() { return "representable in " + detail::to_text(N) + " bits"; }
 };
 
 // Passes if the value is representable in the integer type U, so a narrowing
@@ -343,16 +444,18 @@ struct FitsIn {
 // Passes if the value sets no bits outside Mask. For flag words and permission bits.
 template <auto Mask>
 struct OnlyBits {
+    static constexpr auto mask = Mask;
     static constexpr bool passes(auto v) { return (v & ~Mask) == 0; }
-    static std::string requirement() { return "within bit mask " + std::to_string(Mask); }
+    static std::string requirement() { return "within bit mask " + detail::to_text(Mask); }
 };
 
 // Passes if every bit in Mask is set. The counterpart of OnlyBits. OnlyBits
 // says which bits may be set. HasBits says which bits must be set.
 template <auto Mask>
 struct HasBits {
+    static constexpr auto mask = Mask;
     static constexpr bool passes(auto v) { return (v & Mask) == Mask; }
-    static std::string requirement() { return "with bit mask " + std::to_string(Mask) + " set"; }
+    static std::string requirement() { return "with bit mask " + detail::to_text(Mask) + " set"; }
 };
 
 // Rejects NaN and infinity. NaN compares false with everything, so Between
@@ -363,13 +466,15 @@ struct Finite {
     static std::string requirement() { return "finite"; }
 };
 
-// Passes if the value is in the given set. Template parameters are values.
+// Passes if the value is in the given set. Template parameters are values,
+// all of one type. `values` holds them in a std::array.
 template <auto... Allowed>
 struct In {
+    static constexpr std::array values{Allowed...};
     static constexpr bool passes(auto v) { return ((v == Allowed) || ...); }
     static std::string requirement() {
         std::string s = "one of {";
-        ((s += std::to_string(Allowed) + " "), ...);
+        ((s += detail::to_text(Allowed) + " "), ...);
         s.back() = '}';
         return s;
     }
@@ -413,6 +518,7 @@ struct Not {
 // say what it means.
 template <typename Rule, fixed_string Description>
 struct Named {
+    static constexpr std::string_view description = Description.view();
     static constexpr bool passes(const auto& v) { return Rule::passes(v); }
     static std::string requirement() { return Description.data; }
 };
@@ -423,6 +529,25 @@ using Between = AllOf<AtLeast<Lo>, AtMost<Hi>>;
 
 template <auto... Values>
 using NotIn = Not<In<Values...>>;
+
+// Between and NotIn are aliases, so that Between<0, 100> stays the same type
+// as AllOf<AtLeast<0>, AtMost<100>>. These two specializations add the
+// readable values: Between<Lo, Hi>::min and ::max, NotIn<...>::values. The
+// checks and the messages are the same as for the general templates.
+template <auto Lo, auto Hi>
+struct AllOf<AtLeast<Lo>, AtMost<Hi>> {
+    static constexpr auto min = Lo;
+    static constexpr auto max = Hi;
+    static constexpr bool passes(const auto& v) { return AtLeast<Lo>::passes(v) && AtMost<Hi>::passes(v); }
+    static std::string requirement() { return AtLeast<Lo>::requirement() + " and " + AtMost<Hi>::requirement(); }
+};
+
+template <auto... Values>
+struct Not<In<Values...>> {
+    static constexpr auto values = In<Values...>::values;
+    static constexpr bool passes(const auto& v) { return !In<Values...>::passes(v); }
+    static std::string requirement() { return "not " + In<Values...>::requirement(); }
+};
 
 // 1..65535. Pairs with Hostname and IpAddress below.
 using PortNumber = Named<Between<1, 65535>, "a port number 1..65535">;
@@ -441,20 +566,23 @@ struct NonEmpty {
 
 template <std::size_t N>
 struct SizeIs {
+    static constexpr std::size_t size = N;
     static constexpr bool passes(const auto& c) { return std::size(c) == N; }
-    static std::string requirement() { return "of size " + std::to_string(N); }
+    static std::string requirement() { return "of size " + detail::to_text(N); }
 };
 
 template <std::size_t N>
 struct SizeAtLeast {
+    static constexpr std::size_t min = N;
     static constexpr bool passes(const auto& c) { return std::size(c) >= N; }
-    static std::string requirement() { return "of size >= " + std::to_string(N); }
+    static std::string requirement() { return "of size >= " + detail::to_text(N); }
 };
 
 template <std::size_t N>
 struct SizeAtMost {
+    static constexpr std::size_t max = N;
     static constexpr bool passes(const auto& c) { return std::size(c) <= N; }
-    static std::string requirement() { return "of size <= " + std::to_string(N); }
+    static std::string requirement() { return "of size <= " + detail::to_text(N); }
 };
 
 template <std::size_t Lo, std::size_t Hi>
@@ -718,18 +846,21 @@ struct Printable {
 
 template <fixed_string Prefix>
 struct StartsWith {
+    static constexpr std::string_view prefix = Prefix.view();
     static constexpr bool passes(std::string_view s) { return s.starts_with(Prefix.view()); }
     static std::string requirement() { return "starting with \"" + std::string(Prefix.view()) + "\""; }
 };
 
 template <fixed_string Suffix>
 struct EndsWith {
+    static constexpr std::string_view suffix = Suffix.view();
     static constexpr bool passes(std::string_view s) { return s.ends_with(Suffix.view()); }
     static std::string requirement() { return "ending with \"" + std::string(Suffix.view()) + "\""; }
 };
 
 template <fixed_string Part>
 struct Contains {
+    static constexpr std::string_view part = Part.view();
     static constexpr bool passes(std::string_view s) {
         return s.find(Part.view()) != std::string_view::npos;
     }
@@ -740,6 +871,7 @@ struct Contains {
 // empty string must fail.
 template <fixed_string Allowed>
 struct OnlyChars {
+    static constexpr std::string_view chars = Allowed.view();
     static constexpr bool passes(std::string_view s) {
         return s.find_first_not_of(Allowed.view()) == std::string_view::npos;
     }
@@ -839,25 +971,25 @@ constexpr auto current(const V& var) {
 template <auto& Min>
 struct AtLeastVar {
     static constexpr bool passes(auto v) { return v >= detail::current(Min); }
-    static std::string requirement() { return ">= " + std::to_string(detail::current(Min)); }
+    static std::string requirement() { return ">= " + detail::to_text(detail::current(Min)); }
 };
 
 template <auto& Max>
 struct AtMostVar {
     static constexpr bool passes(auto v) { return v <= detail::current(Max); }
-    static std::string requirement() { return "<= " + std::to_string(detail::current(Max)); }
+    static std::string requirement() { return "<= " + detail::to_text(detail::current(Max)); }
 };
 
 template <auto& N>
 struct LessThanVar {
     static constexpr bool passes(auto v) { return v < detail::current(N); }
-    static std::string requirement() { return "< " + std::to_string(detail::current(N)); }
+    static std::string requirement() { return "< " + detail::to_text(detail::current(N)); }
 };
 
 template <auto& N>
 struct GreaterThanVar {
     static constexpr bool passes(auto v) { return v > detail::current(N); }
-    static std::string requirement() { return "> " + std::to_string(detail::current(N)); }
+    static std::string requirement() { return "> " + detail::to_text(detail::current(N)); }
 };
 
 // If the variable is 0, only 0 passes. There is no division by zero.
@@ -868,7 +1000,7 @@ struct MultipleOfVar {
         if (n == 0) return v == 0;
         return v % n == 0;
     }
-    static std::string requirement() { return "a multiple of " + std::to_string(detail::current(N)); }
+    static std::string requirement() { return "a multiple of " + detail::to_text(detail::current(N)); }
 };
 
 template <auto& N>
@@ -895,7 +1027,7 @@ struct FitsInBitsVar {
         return v >= 0 && static_cast<unsigned long long>(v) < (1ULL << (n & (d - 1)));
     }
     static std::string requirement() {
-        return "representable in " + std::to_string(detail::current(Bits)) + " bits";
+        return "representable in " + detail::to_text(detail::current(Bits)) + " bits";
     }
 };
 
@@ -903,7 +1035,7 @@ template <auto& Mask>
 struct OnlyBitsVar {
     static constexpr bool passes(auto v) { return (v & ~detail::current(Mask)) == 0; }
     static std::string requirement() {
-        return "within bit mask " + std::to_string(detail::current(Mask));
+        return "within bit mask " + detail::to_text(detail::current(Mask));
     }
 };
 
@@ -914,7 +1046,7 @@ struct HasBitsVar {
         return (v & m) == m;
     }
     static std::string requirement() {
-        return "with bit mask " + std::to_string(detail::current(Mask)) + " set";
+        return "with bit mask " + detail::to_text(detail::current(Mask)) + " set";
     }
 };
 
@@ -930,7 +1062,7 @@ struct InVar {
     }
     static std::string requirement() {
         std::string s = "one of {";
-        for (const auto& a : Allowed) s += std::to_string(a) + " ";
+        for (const auto& a : Allowed) s += detail::to_text(a) + " ";
         if (s.back() == ' ') s.back() = '}'; else s += '}';
         return s;
     }
@@ -943,19 +1075,19 @@ using NotInVar = Not<InVar<Values>>;
 template <auto& N>
 struct SizeIsVar {
     static constexpr bool passes(const auto& c) { return std::size(c) == detail::current(N); }
-    static std::string requirement() { return "of size " + std::to_string(detail::current(N)); }
+    static std::string requirement() { return "of size " + detail::to_text(detail::current(N)); }
 };
 
 template <auto& N>
 struct SizeAtLeastVar {
     static constexpr bool passes(const auto& c) { return std::size(c) >= detail::current(N); }
-    static std::string requirement() { return "of size >= " + std::to_string(detail::current(N)); }
+    static std::string requirement() { return "of size >= " + detail::to_text(detail::current(N)); }
 };
 
 template <auto& N>
 struct SizeAtMostVar {
     static constexpr bool passes(const auto& c) { return std::size(c) <= detail::current(N); }
-    static std::string requirement() { return "of size <= " + std::to_string(detail::current(N)); }
+    static std::string requirement() { return "of size <= " + detail::to_text(detail::current(N)); }
 };
 
 template <auto& Lo, auto& Hi>
@@ -1006,6 +1138,7 @@ struct OnlyCharsVar {
 // Satisfies makes a one-off rule from a lambda, with no struct to write.
 template <auto Predicate, fixed_string Description>
 struct Satisfies {
+    static constexpr std::string_view description = Description.view();
     static constexpr bool passes(const auto& v) { return Predicate(v); }
     static std::string requirement() { return Description.data; }
 };

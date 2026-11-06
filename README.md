@@ -76,15 +76,24 @@ Copy `include/vetted.hpp` into your project, or add it with CMake:
 
 ```cmake
 include(FetchContent)
-FetchContent_Declare(vetted GIT_REPOSITORY https://github.com/aedrax/vetted.hpp.git GIT_TAG main)
+FetchContent_Declare(vetted GIT_REPOSITORY https://github.com/aedrax/vetted.hpp.git GIT_TAG v0.5.0)
 FetchContent_MakeAvailable(vetted)
 
 target_link_libraries(app PRIVATE vetted::vetted)
 ```
 
 Or install it (`cmake --install build --prefix /some/where`) and use
-`find_package(vetted REQUIRED)`. Either way the target is `vetted::vetted`,
-and it sets C++20 for you.
+`find_package(vetted 0.5 REQUIRED)`. Either way the target is `vetted::vetted`,
+and it sets C++20 for you. The install includes a version file. Before 1.0,
+only the same minor version matches, because a minor release can change the API.
+
+The header gives its version as `VETTED_VERSION_MAJOR`, `VETTED_VERSION_MINOR`
+and `VETTED_VERSION_PATCH`. [CHANGELOG.md](CHANGELOG.md) lists the changes in
+each release.
+
+For a vcpkg port, pass `-DVETTED_BUILD_EXAMPLES=OFF -DVETTED_BUILD_TESTS=OFF`.
+vcpkg builds the port as the top-level project, so the example and the tests
+are on by default.
 
 The snippets below assume `using namespace vetted;`, as the example code does.
 
@@ -113,16 +122,51 @@ error: constraints not satisfied for class template 'Validated' [with T = int, R
 note: because 'Rule::requirement()' would be invalid: no member named 'requirement' in 'Even'
 ```
 
-### Two ways in
+### Ways in
 
 | | When | On failure |
 |---|---|---|
 | `Quantity{v}` | The value must never be wrong: constants, config, computed values | Throws `std::invalid_argument`, for example `value 5000: expected <= 1000`. In a `constexpr` context, the build fails instead. |
 | `Quantity::try_from(v)` | Untrusted input: user text, network, files | Returns `std::nullopt` |
+| `Quantity::check(v)` (C++23) | Untrusted input, when you must report why it failed | Returns `std::unexpected` with the message, for example `value 5000: expected <= 1000` |
+| `Quantity::violation(v)` | The same, in C++20, where there is no `std::expected` | Returns the message. Returns `std::nullopt` if every rule passes. Makes no value. |
+
+`check` exists when the standard library defines `__cpp_lib_expected`. The
+message is the same text that the exception gives: the value, then
+`: expected `, then the requirement of the first rule that fails. The rules
+run in order.
+
+```cpp
+std::expected<Quantity, std::string> parse_quantity(int16_t raw) {
+    return Quantity::check(raw);   // "value 5000: expected <= 1000"
+}
+
+if (auto reason = Quantity::violation(raw)) {   // C++20
+    log_rejected(*reason);
+}
+```
+
+`try_from`, `check` and `violation` do not throw when a rule fails. Only a
+failed allocation for the message can throw `std::bad_alloc`. Like
+`try_from`, they run at compile time when the value is a constant. A
+passing constant gives a value (`check`) or `std::nullopt` (`violation`). A
+failing constant fails the build and names the rule, as the constructor does.
+The message needs `std::format` or `std::to_string`, and neither is
+`constexpr`.
+
+Each one also takes a less refined `Validated` type and runs only the rules
+that type did not prove. See [Refining a type](#refining-a-type).
 
 ## The toolbox
 
 `vetted.hpp` ships with these rules. Most are three lines, so add your own.
+
+Each rule with a parameter gives it as a `static constexpr` member, so code
+can read it: `AtMost<1000>::max`, `Between<0, 100>::min`, `In<1, 2, 5>::values`.
+A `Validated` type gives `value_type` and `rules` (a `std::tuple` of its
+rules). A program can walk them to make a JSON Schema, CLI help or docs. See
+[docs/rules.md](docs/rules.md#reading-the-rules-of-a-type) for the names and
+[docs/schema.md](docs/schema.md) for an example.
 
 | Rule | Passes when | Typical use |
 |---|---|---|
@@ -252,6 +296,9 @@ void gift_wrap(GiftQuantity quantity) { reserve_stock(quantity); }   // takes a 
 if (auto gift = GiftQuantity::try_from(quantity)) gift_wrap(*gift);  // checks AtMost<5> only
 ```
 
+`GiftQuantity::check(quantity)` and `GiftQuantity::violation(quantity)` do
+the same, and give the message `value 250: expected <= 5`.
+
 Rules are matched by type, so `Between<0, 100>` and the pair `AtLeast<0>,
 AtMost<100>` are different rules. The order of rules does not affect
 conversion.
@@ -295,6 +342,16 @@ fields, and one line per rule in the toolbox.
 cmake -S . -B build && cmake --build build && ./build/vetted_example
 ```
 
+To run the tests, in C++20 and then in C++23:
+
+```sh
+cmake -S . -B build && cmake --build build && ctest --test-dir build
+cmake -S . -B build-23 -DCMAKE_CXX_STANDARD=23 && cmake --build build-23 && ctest --test-dir build-23
+```
+
+The tests build with strict warnings and `-Werror`. One test builds with
+`-fno-exceptions`.
+
 To watch the compiler reject a bad constant:
 
 ```sh
@@ -306,7 +363,9 @@ cmake -S . -B build -DDEMO_COMPILE_ERROR=ON && cmake --build build
 | `include/vetted.hpp` | The whole library. Everything is in `namespace vetted`. |
 | `examples/domain.hpp` | The example's types: `Quantity`, `ChunkSize`, `ShippingDays`, ... one line each, plus structs of them |
 | `examples/main.cc` | The call chain before and after, the parsing boundary, and the demo |
-| `docs/` | Rules in depth, validated types in structs, and the safety and performance notes |
+| `tests/` | The tests: messages, readable rules, the version, and a build with `-fno-exceptions` |
+| `docs/` | Rules in depth, a schema from the rules, validated types in structs, and the safety and performance notes |
+| `CHANGELOG.md` | The changes in each release |
 
 ## FAQ
 
@@ -362,14 +421,16 @@ no `std::hash` specialization. Hash `q.get()` instead, or add one yourself.
 
 ### Can I build with exceptions disabled?
 
-Yes, if you use only `try_from`. The throwing constructor contains a `throw`,
-and the compiler rejects it under `-fno-exceptions` only when you use it.
-`try_from` never throws.
+Yes, if you use only `try_from`, `check` and `violation`. The throwing
+constructor contains a `throw`, and the compiler rejects it under
+`-fno-exceptions` only when you use it. The tests build one file with
+`-fno-exceptions` to keep this true.
 
 ### Does it need C++20?
 
 Yes. It uses concepts, `auto` parameters, string literals as template
 parameters, and `std::is_constant_evaluated`. There is no C++17 build.
+In C++23, `check` returns a `std::expected`.
 
 ### How do I write my own rule?
 

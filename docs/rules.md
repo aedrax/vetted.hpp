@@ -15,13 +15,15 @@ struct PowerOfTwo {
 };
 ```
 
-A rule can take parameters:
+A rule can take parameters. Give each parameter as a `static constexpr`
+member, so code can read it (see [Reading the rules of a type](#reading-the-rules-of-a-type)):
 
 ```cpp
 template <auto Max>
 struct AtMost {
+    static constexpr auto max = Max;
     static constexpr bool passes(auto v) { return v <= Max; }
-    static std::string requirement() { return "<= " + std::to_string(Max); }
+    static std::string requirement() { return "<= " + detail::to_text(Max); }
 };
 ```
 
@@ -80,8 +82,11 @@ conversion:
   check. A function that takes a `Quantity` accepts a `GiftQuantity`.
 - Narrowing is explicit, and runs only the rules the source did not prove.
   `GiftQuantity{quantity}` throws if `AtMost<5>` fails.
-  `GiftQuantity::try_from(quantity)` returns `nullopt`. Neither one re-runs
-  `Positive` or `AtMost<1000>`.
+  `GiftQuantity::try_from(quantity)` returns `nullopt`.
+  `GiftQuantity::check(quantity)` (C++23) and
+  `GiftQuantity::violation(quantity)` give the message
+  `value 250: expected <= 5`. None of them re-runs `Positive` or
+  `AtMost<1000>`.
 
 ```cpp
 void gift_wrap(GiftQuantity quantity) {
@@ -216,17 +221,73 @@ Four things to know:
 - **Refinement and widening work as for any rule.** `AtMostVar<stock_on_hand>`
   is one type wherever it is spelled, so `InStockQuantity` widens to
   `Quantity` for free.
+- **A schema generator cannot read the bound.** The bound is not a
+  constant, so a `Var` rule gives no `static constexpr` member. Code that
+  walks the rules of a type (see [schema.md](schema.md)) finds nothing to
+  read in it. If the bound must appear in a schema, write it there yourself.
 
 To write your own, take the variable as a reference template parameter and
-read it with `detail::current`, which calls `load()` on an atomic:
+read it with `detail::current`, which calls `load()` on an atomic. Print the
+bound with `detail::to_text`, so a floating-point bound prints as the toolbox
+prints it:
 
 ```cpp
 template <auto& Limit>
 struct AtMostVar {
     static constexpr bool passes(auto v) { return v <= detail::current(Limit); }
-    static std::string requirement() { return "<= " + std::to_string(detail::current(Limit)); }
+    static std::string requirement() { return "<= " + detail::to_text(detail::current(Limit)); }
 };
 ```
+
+## Reading the rules of a type
+
+A program that makes a JSON Schema, CLI help or docs from a type must read
+the bounds as values, not as the text of `requirement()`. Each rule with a
+parameter gives it as a `static constexpr` member:
+
+| Rule | Members |
+|---|---|
+| `AtLeast<N>` | `min` |
+| `AtMost<N>` | `max` |
+| `Between<Lo, Hi>` | `min`, `max` |
+| `GreaterThan<N>`, `LessThan<N>` | `bound` |
+| `MultipleOf<N>`, `Aligned<N>` | `divisor` |
+| `FitsInBits<N>` | `bits` (a `std::size_t`) |
+| `OnlyBits<Mask>`, `HasBits<Mask>` | `mask` |
+| `In<a, b, c>`, `NotIn<a, b, c>` | `values`: a `std::array`. The values must all have one type. |
+| `SizeIs<N>` | `size` (a `std::size_t`) |
+| `SizeAtLeast<N>` | `min` (a `std::size_t`) |
+| `SizeAtMost<N>` | `max` (a `std::size_t`) |
+| `StartsWith<"...">` | `prefix` (a `std::string_view`) |
+| `EndsWith<"...">` | `suffix` |
+| `Contains<"...">` | `part` |
+| `OnlyChars<"...">` | `chars` |
+| `Named<R, "text">`, `Satisfies<f, "text">` | `description` (a `std::string_view`) |
+
+The value members have the type of the template argument:
+`AtMost<1000>::max` is an `int`, and `AtMost<2.5>::max` is a `double`. The
+names say what a value means, not which rule gave it. `min` is a lower bound
+for `AtLeast` and a lower size for `SizeAtLeast`, so read `min` as a size only
+for a rule on a container.
+
+A `Validated<T, Rules...>` gives `value_type` (`T`) and `rules`
+(`std::tuple<Rules...>`). See [schema.md](schema.md) for code that visits
+the rules.
+
+`Between` and `NotIn` are aliases, so `Between<0, 100>` is the same type as
+`AllOf<AtLeast<0>, AtMost<100>>`. The header specializes
+`AllOf<AtLeast<Lo>, AtMost<Hi>>` and `Not<In<...>>` to add the members. They
+check and print the same as the general templates. To read a combinator such
+as `SizeBetween`, match its template arguments with a partial specialization,
+as the walker in [schema.md](schema.md) does for `AllOf`.
+
+`NotIn<...>::values` holds the values that FAIL. Code that reads `values` as
+the allowed set must skip `Not`. [schema.md](schema.md) shows a walker that
+does.
+
+The rules with no parameter (`Positive`, `Even`, `Hostname`, ...) and the
+`Var` rules give no member. A `Var` rule has no constant to give. See
+[Rules against a variable](#rules-against-a-variable).
 
 ## Rules over structs
 
@@ -240,3 +301,11 @@ The error message prints the value when `std::to_string` can (numbers), and
 quotes it when it is text (`std::string`, `std::string_view`). For a struct,
 a container or a pointer, the message says only "value". Change
 `describe_value` if you want a different format.
+
+A floating-point value prints with `std::format("{}", v)` when the standard
+library defines `__cpp_lib_format`: `0.1` prints as `0.1`, and `1e9` as
+`1e+09`. Otherwise it prints with `std::to_string` (`0.100000`). The same
+applies to the numbers in each `requirement()`, the `Var` rules included.
+Integers print the same either way. A rule of your own can call
+`vetted::detail::to_text(v)` to print a number the same way. `<format>` adds
+compile time to each file that includes the header.
